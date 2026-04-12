@@ -1,0 +1,9 @@
+{
+  "name": "CampaNest Pune",
+  "short_name": "CampaNest",
+  "description": "Your campus. Your neighbourhood.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#FF7A00"
+}

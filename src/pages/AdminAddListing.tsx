@@ -1,0 +1,521 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { addDoc, collection, deleteField, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
+import { addDays } from 'date-fns';
+import { ChevronLeft, Upload, X } from 'lucide-react';
+import { db, storage } from '../lib/firebase';
+import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
+import { useToast } from '../components/Toast';
+import { Listing, ListingCategory, ListingPlanType } from '../types';
+
+const CATEGORIES: ListingCategory[] = [
+  'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
+];
+
+const buildPlan = (category: ListingCategory, adDuration: number): { pricePlan: number; duration: number; planType: ListingPlanType } => {
+  if (category === 'advertisement') {
+    const price = (PRICING.advertisement as Record<number, number>)[adDuration] || 199;
+    return { pricePlan: price, duration: adDuration, planType: 'ad' };
+  }
+  if (category === 'requirement') return { pricePlan: PRICING.requirement, duration: 30, planType: 'perPost' };
+  if (category === 'secondhand') return { pricePlan: PRICING.secondhand, duration: 30, planType: 'perPost' };
+  if (category === 'block') return { pricePlan: PRICING.block, duration: 30, planType: 'monthly' };
+  if (category === 'doctor') return { pricePlan: PRICING.doctor, duration: 30, planType: 'monthly' };
+  return { pricePlan: PRICING[category], duration: 30, planType: 'monthly' };
+};
+
+const parseLocationCoordinates = (raw: string): { lat: number; lng: number } | null => {
+  const value = raw.trim();
+  if (!value) return null;
+
+  const parts = value.split(',').map((part) => part.trim());
+  if (parts.length !== 2) {
+    throw new Error('Location must be in "Latitude, Longitude" format.');
+  }
+
+  const lat = Number(parts[0]);
+  const lng = Number(parts[1]);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error('Location coordinates must be valid numbers.');
+  }
+
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    throw new Error('Latitude must be between -90 to 90 and longitude between -180 to 180.');
+  }
+
+  return { lat, lng };
+};
+
+const toLocationInputValue = (listing?: Partial<Listing> | null) => {
+  const lat = listing?.location?.lat;
+  const lng = listing?.location?.lng;
+  if (typeof lat !== 'number' || typeof lng !== 'number') return '';
+  return `${lat}, ${lng}`;
+};
+
+export default function AdminAddListing() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { showToast } = useToast();
+
+  const editId = (searchParams.get('id') || '').trim();
+  const isEditMode = Boolean(editId);
+
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [loadingListing, setLoadingListing] = useState(false);
+  const [category, setCategory] = useState<ListingCategory>('mess');
+  const [adDuration, setAdDuration] = useState(7);
+  const [initialListing, setInitialListing] = useState<Partial<Listing> | null>(null);
+  const [formVersion, setFormVersion] = useState(0);
+
+  const planPreview = useMemo(() => buildPlan(category, adDuration), [category, adDuration]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadListing = async () => {
+      if (!isEditMode) {
+        setInitialListing(null);
+        setCategory('mess');
+        setAdDuration(7);
+        setFormVersion((prev) => prev + 1);
+        return;
+      }
+
+      setLoadingListing(true);
+      try {
+        const snap = await getDoc(doc(db, 'listings', editId));
+        if (!snap.exists()) {
+          showToast('Listing not found', 'error');
+          navigate('/admin');
+          return;
+        }
+
+        if (!active) return;
+
+        const data = snap.data() as Partial<Listing>;
+        setInitialListing(data);
+
+        const loadedCategory = data.category;
+        if (loadedCategory && CATEGORIES.includes(loadedCategory)) {
+          setCategory(loadedCategory);
+          if (loadedCategory === 'advertisement' && typeof data.duration === 'number' && [3, 7, 15].includes(data.duration)) {
+            setAdDuration(data.duration);
+          }
+        }
+
+        setFormVersion((prev) => prev + 1);
+      } catch (error: any) {
+        console.error('AdminAddListing: failed to load listing for edit', error);
+        showToast(error?.message || 'Failed to load listing', 'error');
+      } finally {
+        if (active) setLoadingListing(false);
+      }
+    };
+
+    void loadListing();
+
+    return () => {
+      active = false;
+    };
+  }, [editId, isEditMode, navigate, showToast]);
+
+  const uploadPhoto = async (file: File, path: string) => {
+    const projectId = storage.app.options.projectId || 'campanestpune';
+    const buckets = [`${projectId}.firebasestorage.app`, `${projectId}.appspot.com`];
+    let lastError: any = null;
+
+    for (const bucket of buckets) {
+      try {
+        const bucketStorage = getStorage(storage.app, `gs://${bucket}`);
+        const photoRef = ref(bucketStorage, path);
+        await uploadBytes(photoRef, file);
+        return await getDownloadURL(photoRef);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError;
+  };
+
+  const onPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const incoming = Array.from(e.target.files);
+    setPhotos((prev) => [...prev, ...incoming].slice(0, 8));
+  };
+
+  const removePhoto = (index: number) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSaving(true);
+
+    try {
+      const formData = new FormData(e.currentTarget);
+      const getText = (key: string) => String(formData.get(key) || '').trim();
+      const getNum = (key: string, fallback = 0) => {
+        const raw = String(formData.get(key) || '').trim();
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : fallback;
+      };
+
+      const parsedLocation = parseLocationCoordinates(getText('locationCoordinates'));
+      const closedTillRaw = getText('closedTill');
+
+      const photoUrls: string[] = [];
+      for (const photo of photos) {
+        try {
+          const safeName = photo.name.replace(/\s+/g, '_');
+          const url = await uploadPhoto(photo, `listings/admin/${Date.now()}_${safeName}`);
+          photoUrls.push(url);
+        } catch {
+          // allow save without blocked photos
+        }
+      }
+
+      const existingPhotos = Array.isArray(initialListing?.photos) ? initialListing.photos : [];
+      const plan = buildPlan(category, adDuration);
+      const durationDefault = isEditMode ? Number(initialListing?.duration || plan.duration) : 30;
+      const duration = getNum('duration', durationDefault);
+      const validUntil = addDays(new Date(), duration);
+
+      const listing: Record<string, any> = {
+        name: getText('name') || getText('title') || getText('itemName'),
+        category,
+        area: getText('area'),
+        nearCollege: getText('nearCollege'),
+        address: getText('address'),
+        phone: getText('phone'),
+        whatsapp: getText('whatsapp'),
+        description: getText('description'),
+        photos: photoUrls.length > 0 ? photoUrls : existingPhotos,
+        providerId: initialListing?.providerId || 'admin-managed',
+
+        totalViews: getNum('totalViews', Number(initialListing?.totalViews || 0)),
+        avgRating: getNum('avgRating', Number(initialListing?.avgRating || 0)),
+        totalRatings: getNum('totalRatings', Number(initialListing?.totalRatings || 0)),
+        priorityScore: getNum('priorityScore', Number(initialListing?.priorityScore || 50)),
+        isFeatured: formData.get('isFeatured') === 'on',
+        isSponsored: formData.get('isSponsored') === 'on',
+        active: initialListing?.active ?? true,
+
+        pricePlan: getNum('pricePlan', Number(initialListing?.pricePlan || plan.pricePlan)),
+        duration,
+        planType: (formData.get('planType') as ListingPlanType) || initialListing?.planType || plan.planType,
+        validUntil: isEditMode ? (initialListing?.validUntil || validUntil) : validUntil
+      };
+
+      if (parsedLocation) {
+        listing.location = parsedLocation;
+      } else if (isEditMode) {
+        listing.location = deleteField();
+      }
+
+      if (category === 'mess') {
+        listing.weeklyMenu = {
+          monday: getText('menuMonday'),
+          tuesday: getText('menuTuesday'),
+          wednesday: getText('menuWednesday'),
+          thursday: getText('menuThursday'),
+          friday: getText('menuFriday'),
+          saturday: getText('menuSaturday'),
+          sunday: getText('menuSunday')
+        };
+        listing.specialOccasionOffer = getText('specialOccasionOffer');
+        listing.unlimitedAvailable = formData.get('unlimitedAvailable') === 'on';
+        listing.unlimitedPrice = getNum('unlimitedPrice');
+      }
+
+      if (category === 'pg' || category === 'hostel') {
+        listing.roomTypes = getText('roomTypes');
+        listing.pricePerMonth = getNum('pricePerMonth');
+        listing.facilities = getText('facilities').split(',').map((v) => v.trim()).filter(Boolean);
+      }
+
+      if (category === 'hotel') {
+        listing.foodItems = getText('foodItems').split(',').map((v) => v.trim()).filter(Boolean);
+        listing.specialOccasionOffer = getText('hotelSpecialOffer');
+        listing.unlimitedAvailable = formData.get('hotelUnlimited') === 'on';
+      }
+
+      if (category === 'block') {
+        listing.blockType = getText('blockType');
+        listing.blockSize = getText('blockSize');
+        listing.rentOrSell = getText('rentOrSell').toLowerCase() || 'rent';
+        listing.pricePerMonth = getNum('pricePerMonth');
+        listing.sellingPrice = getNum('sellingPrice');
+      }
+
+      if (category === 'requirement') {
+        listing.requirementType = getText('requirementType');
+        listing.requirementText = getText('requirementText');
+        listing.requirement = listing.requirementText;
+        listing.budget = getNum('budget');
+        listing.urgency = getText('urgency');
+      }
+
+      if (category === 'secondhand') {
+        listing.itemName = getText('itemName');
+        listing.price = getNum('itemPrice');
+        listing.condition = getText('condition').toLowerCase() || 'used';
+      }
+
+      if (category === 'advertisement') {
+        listing.title = getText('title');
+        listing.bannerImage = photoUrls[0] || initialListing?.bannerImage || '';
+      }
+
+      if (category === 'doctor') {
+        listing.doctorName = getText('doctorName') || listing.name;
+        listing.name = listing.doctorName;
+        listing.specialization = getText('specialization');
+        listing.timing = getText('timing');
+        listing.daysAvailable = getText('daysAvailable');
+        listing.closedToday = formData.get('closedToday') === 'on';
+        if (closedTillRaw) {
+          const closedTillDate = new Date(`${closedTillRaw}T23:59:59`);
+          if (Number.isFinite(closedTillDate.getTime())) {
+            listing.closedTill = closedTillDate;
+          } else if (isEditMode) {
+            listing.closedTill = deleteField();
+          }
+        } else if (isEditMode) {
+          listing.closedTill = deleteField();
+        }
+      }
+
+      if (isEditMode) {
+        console.log('AdminAddListing: updating listing', editId, listing);
+        await updateDoc(doc(db, 'listings', editId), listing as any);
+        showToast('Listing updated successfully', 'success');
+      } else {
+        listing.createdAt = serverTimestamp();
+        console.log('AdminAddListing: saving listing', listing);
+        await addDoc(collection(db, 'listings'), listing);
+        showToast('Listing added successfully', 'success');
+      }
+
+      navigate('/admin');
+    } catch (error: any) {
+      console.error('AdminAddListing: failed to save listing', error);
+      showToast(error?.message || 'Failed to save listing', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const initialName = (initialListing?.name || initialListing?.title || initialListing?.itemName || '') as string;
+  const initialMenu = initialListing?.weeklyMenu || {};
+
+  return (
+    <div className="min-h-screen pb-24">
+      <div className="sticky top-0 bg-background z-10 px-4 py-4 border-b border-zinc-800 flex items-center gap-4">
+        <button onClick={() => navigate(-1)}><ChevronLeft /></button>
+        <h1 className="font-bold text-lg">{isEditMode ? 'Edit Listing (Admin)' : 'Add Listing (Admin)'}</h1>
+      </div>
+
+      {loadingListing ? (
+        <div className="p-6 text-zinc-500">Loading listing data...</div>
+      ) : (
+        <form key={formVersion} className="p-6 space-y-6" onSubmit={onSubmit}>
+          <div className="space-y-3">
+            <input
+              name="name"
+              placeholder="Name"
+              className="input-field"
+              defaultValue={initialName}
+              required={category !== 'advertisement' && category !== 'secondhand'}
+            />
+            <select name="category" className="input-field" value={category} onChange={(e) => setCategory(e.target.value as ListingCategory)}>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+            </select>
+            <select name="area" className="input-field" defaultValue={initialListing?.area || ''} required>
+              <option value="">Select Area</option>
+              {AREAS.map((area) => <option key={area} value={area}>{area}</option>)}
+            </select>
+            <input name="nearCollege" placeholder="Near College" className="input-field" defaultValue={initialListing?.nearCollege || ''} required={category !== 'advertisement'} />
+            <textarea name="address" placeholder="Address" className="input-field h-20" defaultValue={initialListing?.address || ''} required={category !== 'advertisement'} />
+            <input name="phone" placeholder="Contact Number" className="input-field" defaultValue={initialListing?.phone || ''} required />
+            <input name="whatsapp" placeholder="WhatsApp Number" className="input-field" defaultValue={initialListing?.whatsapp || ''} required />
+            <textarea name="description" placeholder="Description" className="input-field h-24" defaultValue={initialListing?.description || ''} required />
+            <input
+              name="locationCoordinates"
+              placeholder="Location Coordinates (Latitude, Longitude)"
+              className="input-field"
+              defaultValue={toLocationInputValue(initialListing)}
+            />
+            <p className="text-[11px] text-zinc-500">Example: 18.6270, 73.7997</p>
+          </div>
+
+          {category === 'mess' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Mess Fields</h3>
+              <input name="menuMonday" placeholder="Monday menu" className="input-field" defaultValue={initialMenu.monday || initialMenu.Monday || ''} />
+              <input name="menuTuesday" placeholder="Tuesday menu" className="input-field" defaultValue={initialMenu.tuesday || initialMenu.Tuesday || ''} />
+              <input name="menuWednesday" placeholder="Wednesday menu" className="input-field" defaultValue={initialMenu.wednesday || initialMenu.Wednesday || ''} />
+              <input name="menuThursday" placeholder="Thursday menu" className="input-field" defaultValue={initialMenu.thursday || initialMenu.Thursday || ''} />
+              <input name="menuFriday" placeholder="Friday menu" className="input-field" defaultValue={initialMenu.friday || initialMenu.Friday || ''} />
+              <input name="menuSaturday" placeholder="Saturday menu" className="input-field" defaultValue={initialMenu.saturday || initialMenu.Saturday || ''} />
+              <input name="menuSunday" placeholder="Sunday menu" className="input-field" defaultValue={initialMenu.sunday || initialMenu.Sunday || ''} />
+              <input name="specialOccasionOffer" placeholder="Special Occasion Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="unlimitedAvailable" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
+              <input name="unlimitedPrice" type="number" placeholder="Unlimited Price" className="input-field" defaultValue={initialListing?.unlimitedPrice || ''} />
+            </div>
+          )}
+
+          {(category === 'pg' || category === 'hostel') && (
+            <div className="space-y-3">
+              <h3 className="font-bold">PG / Hostel Fields</h3>
+              <input name="roomTypes" placeholder="Room Types" className="input-field" defaultValue={String((initialListing as any)?.roomTypes || '')} />
+              <input name="pricePerMonth" type="number" placeholder="Price per month" className="input-field" defaultValue={initialListing?.pricePerMonth || ''} />
+              <input name="facilities" placeholder="Facilities (comma separated)" className="input-field" defaultValue={Array.isArray((initialListing as any)?.facilities) ? (initialListing as any).facilities.join(', ') : ''} />
+            </div>
+          )}
+
+          {category === 'hotel' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Hotel Fields</h3>
+              <input name="foodItems" placeholder="Food items (comma separated)" className="input-field" defaultValue={Array.isArray((initialListing as any)?.foodItems) ? (initialListing as any).foodItems.join(', ') : ''} />
+              <input name="hotelSpecialOffer" placeholder="Special Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="hotelUnlimited" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
+            </div>
+          )}
+
+          {category === 'block' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Block Renting Fields</h3>
+              <select name="blockType" className="input-field" defaultValue={initialListing?.blockType || 'shop'}>
+                <option value="shop">Shop</option>
+                <option value="office">Office</option>
+                <option value="room">Room</option>
+                <option value="open space">Open Space</option>
+              </select>
+              <input name="blockSize" placeholder="Block Size" className="input-field" defaultValue={initialListing?.blockSize || ''} />
+              <select name="rentOrSell" className="input-field" defaultValue={initialListing?.rentOrSell || 'rent'}>
+                <option value="rent">Rent</option>
+                <option value="sell">Sell</option>
+                <option value="both">Both</option>
+              </select>
+              <input name="pricePerMonth" type="number" placeholder="Price Per Month" className="input-field" defaultValue={initialListing?.pricePerMonth || ''} />
+              <input name="sellingPrice" type="number" placeholder="Selling Price" className="input-field" defaultValue={initialListing?.sellingPrice || ''} />
+            </div>
+          )}
+
+          {category === 'requirement' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Requirement Fields</h3>
+              <input name="requirementType" placeholder="Requirement Type" className="input-field" defaultValue={initialListing?.requirementType || ''} />
+              <textarea name="requirementText" placeholder="Requirement Text" className="input-field h-24" defaultValue={initialListing?.requirementText || ''} />
+              <input name="budget" type="number" placeholder="Budget (optional)" className="input-field" defaultValue={initialListing?.budget || ''} />
+              <input name="urgency" placeholder="Urgency" className="input-field" defaultValue={initialListing?.urgency || ''} />
+            </div>
+          )}
+
+          {category === 'secondhand' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Second Hand Items Fields</h3>
+              <input name="itemName" placeholder="Item Name" className="input-field" defaultValue={initialListing?.itemName || ''} />
+              <input name="itemPrice" type="number" placeholder="Item Price" className="input-field" defaultValue={initialListing?.price || ''} />
+              <select name="condition" className="input-field" defaultValue={initialListing?.condition || 'used'}>
+                <option value="new">New</option>
+                <option value="good">Good</option>
+                <option value="used">Used</option>
+              </select>
+            </div>
+          )}
+
+          {category === 'advertisement' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Advertisement Fields</h3>
+              <input name="title" placeholder="Ad Title" className="input-field" defaultValue={initialListing?.title || ''} />
+              <select className="input-field" value={adDuration} onChange={(e) => setAdDuration(Number(e.target.value))}>
+                <option value={3}>3 days (Rs99)</option>
+                <option value={7}>7 days (Rs199)</option>
+                <option value={15}>15 days (Rs399)</option>
+              </select>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isSponsored" defaultChecked={Boolean(initialListing?.isSponsored)} /> Sponsored</label>
+            </div>
+          )}
+
+          {category === 'doctor' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Doctor Fields</h3>
+              <input name="doctorName" placeholder="Doctor Name" className="input-field" defaultValue={initialListing?.doctorName || initialListing?.name || ''} required />
+              <input name="specialization" placeholder="Specialization (optional)" className="input-field" defaultValue={initialListing?.specialization || ''} />
+              <input name="timing" placeholder="Timing (e.g. 10:00 AM - 2:00 PM, 6:00 PM - 9:00 PM)" className="input-field" defaultValue={initialListing?.timing || ''} required />
+              <input name="daysAvailable" placeholder="Days Available (optional)" className="input-field" defaultValue={initialListing?.daysAvailable || ''} />
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="closedToday" defaultChecked={Boolean(initialListing?.closedToday)} />
+                Closed Today
+              </label>
+              <div className="space-y-1">
+                <label className="text-xs text-zinc-400">Closed Till (optional)</label>
+                <input
+                  type="date"
+                  name="closedTill"
+                  className="input-field"
+                  defaultValue={initialListing?.closedTill?.toDate?.()?.toISOString?.()?.slice(0, 10) || ''}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <h3 className="font-bold">Pricing & Plan</h3>
+            <input name="pricePlan" type="number" className="input-field" defaultValue={initialListing?.pricePlan ?? planPreview.pricePlan} />
+            <input name="duration" type="number" className="input-field" defaultValue={initialListing?.duration ?? 30} />
+            <select name="planType" className="input-field" defaultValue={initialListing?.planType || planPreview.planType}>
+              <option value="monthly">monthly</option>
+              <option value="perPost">perPost</option>
+              <option value="ad">ad</option>
+            </select>
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="font-bold">Admin Control</h3>
+            <input name="totalViews" type="number" placeholder="totalViews" className="input-field" defaultValue={initialListing?.totalViews ?? 0} />
+            <input name="avgRating" type="number" step="0.1" placeholder="avgRating" className="input-field" defaultValue={initialListing?.avgRating ?? 0} />
+            <input name="totalRatings" type="number" placeholder="totalRatings" className="input-field" defaultValue={initialListing?.totalRatings ?? 0} />
+            <input name="priorityScore" type="number" placeholder="priorityScore" className="input-field" defaultValue={initialListing?.priorityScore ?? 50} />
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isFeatured" defaultChecked={Boolean(initialListing?.isFeatured)} /> Featured</label>
+            {!isEditMode && <p className="text-xs text-zinc-500">New listings are saved as active by default.</p>}
+          </div>
+
+          <div className="space-y-3">
+            <h3 className="font-bold">Photos</h3>
+            {isEditMode && Array.isArray(initialListing?.photos) && initialListing.photos.length > 0 && (
+              <p className="text-[11px] text-zinc-500">Existing photos are kept unless you upload new ones.</p>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              {photos.map((photo, i) => (
+                <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
+                  <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-full object-cover" />
+                  <button type="button" onClick={() => removePhoto(i)} className="absolute top-1 right-1 bg-black/50 p-1 rounded-full text-white">
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+              {photos.length < 8 && (
+                <label className="aspect-square rounded-lg border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center text-zinc-500 cursor-pointer hover:border-primary transition-colors">
+                  <Upload size={20} />
+                  <span className="text-[10px] mt-1">Upload</span>
+                  <input type="file" className="hidden" accept="image/*" multiple onChange={onPhotoChange} />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <button type="submit" disabled={saving} className="btn-primary w-full">
+            {saving ? (isEditMode ? 'Updating...' : 'Saving...') : (isEditMode ? 'Update Listing' : 'Add Listing')}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}

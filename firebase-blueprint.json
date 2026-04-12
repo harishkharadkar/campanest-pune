@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user account information and roles.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["student", "provider", "admin"] },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "language": { "type": "string", "enum": ["en", "mr", "hi"] },
+        "theme": { "type": "string", "enum": ["dark", "light"] },
+        "banned": { "type": "boolean" }
+      },
+      "required": ["name", "email", "role"]
+    },
+    "ProviderProfile": {
+      "title": "Provider Profile",
+      "description": "Stores business information for service providers.",
+      "type": "object",
+      "properties": {
+        "businessName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "subscriptionStart": { "type": "string", "format": "date-time" },
+        "subscriptionEnd": { "type": "string", "format": "date-time" },
+        "isActive": { "type": "boolean" },
+        "isFreeTrialUsed": { "type": "boolean" },
+        "totalMonthlyCharge": { "type": "number" }
+      }
+    },
+    "Listing": {
+      "title": "Listing",
+      "description": "A service or requirement listing in the marketplace.",
+      "type": "object",
+      "properties": {
+        "providerId": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "area": { "type": "string" },
+        "nearCollege": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "photos": { "type": "array", "items": { "type": "string" } },
+        "active": { "type": "boolean" },
+        "totalViews": { "type": "integer" },
+        "avgRating": { "type": "number" },
+        "totalRatings": { "type": "integer" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "UserProfile", "description": "User account data" },
+    "/providers/{uid}": { "schema": "ProviderProfile", "description": "Provider business data" },
+    "/listings/{listingId}": { "schema": "Listing", "description": "Marketplace listings" },
+    "/listings/{listingId}/ratings/{uid}": { "schema": "object", "description": "User ratings for listings" }
+  }
+}

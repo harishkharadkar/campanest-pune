@@ -1,0 +1,8 @@
+{
+  "name": "CampaNest Pune",
+  "description": "Student marketplace for Pune colleges. Find PGs, mess services, hostels, shops, and more near your campus.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

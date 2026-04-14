@@ -28,6 +28,22 @@ export type ListingCategory =
 export type ServiceType = ListingCategory | 'blockrent' | 'avashyakta' | 'newopening';
 export type ListingPlanType = 'monthly' | 'perPost' | 'ad';
 
+export type MenuItemType = 'Veg' | 'Non-Veg';
+export type MenuItemCategory = 'Thali' | 'Combo' | 'Main' | 'Other' | 'food' | 'shop';
+
+export interface MenuItem {
+  id?: string;
+  itemName: string;
+  price: number;
+  type: MenuItemType;
+  category: MenuItemCategory;
+  servingDetails?: string[];
+  listingId: string;
+  listingName: string;
+  location: string;
+  createdAt?: any;
+}
+
 export interface ProviderProfile {
   uid: string;
   businessName: string;
@@ -86,6 +102,10 @@ export interface Listing {
   specialOccasionOffer?: string;
   unlimitedAvailable?: boolean;
   unlimitedPrice?: number;
+  menuItems?: MenuItem[];
+  monthlyRate?: number;
+  weeklyRate?: number;
+  perPlateRate?: number;
   weeklyMenu?: {
     monday?: string;
     tuesday?: string;
@@ -133,4 +153,14 @@ export interface Listing {
   daysAvailable?: string;
   closedToday?: boolean;
   closedTill?: any;
+
+  // PG / Hostel structured fields
+  gender?: 'boys' | 'girls' | 'both';
+  roomType?: 'withCot' | 'withoutCot';
+  messAvailable?: boolean;
+  totalRooms?: number;
+  availableRooms?: number;
+
+  // Trust metadata
+  lastUpdated?: any;
 }

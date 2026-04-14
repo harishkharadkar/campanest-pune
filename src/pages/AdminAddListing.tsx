@@ -1,17 +1,45 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { addDoc, collection, deleteField, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { addDays } from 'date-fns';
 import { ChevronLeft, Upload, X } from 'lucide-react';
 import { db, storage } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
-import { Listing, ListingCategory, ListingPlanType } from '../types';
+import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
+import { Listing, ListingCategory, ListingPlanType, MenuItem } from '../types';
 
 const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
 ];
+
+type LocalMenuItem = {
+  itemName: string;
+  price: number;
+  type: 'Veg' | 'Non-Veg';
+  category: 'Thali' | 'Combo' | 'Main' | 'Other';
+  servingDetails?: string;
+};
+
+const normalizeMenuItems = (items: Partial<MenuItem>[] = []): LocalMenuItem[] => {
+  return items
+    .map((item) => ({
+      itemName: String(item.itemName || '').trim(),
+      price: Number(item.price || 0),
+      type: item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg',
+      category: ['Thali', 'Combo', 'Main', 'Other'].includes(String(item.category)) ? (item.category as LocalMenuItem['category']) : 'Other',
+      servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails.join('\n') : ''
+    }))
+    .filter((item) => item.itemName && item.price > 0);
+};
+
+const toServingDetailsArray = (value?: string): string[] => {
+  return String(value || '')
+    .split(/\r?\n|,|•|·|\|/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+};
 
 const buildPlan = (category: ListingCategory, adDuration: number): { pricePlan: number; duration: number; planType: ListingPlanType } => {
   if (category === 'advertisement') {
@@ -69,6 +97,7 @@ export default function AdminAddListing() {
   const [category, setCategory] = useState<ListingCategory>('mess');
   const [adDuration, setAdDuration] = useState(7);
   const [initialListing, setInitialListing] = useState<Partial<Listing> | null>(null);
+  const [menuItems, setMenuItems] = useState<LocalMenuItem[]>([]);
   const [formVersion, setFormVersion] = useState(0);
 
   const planPreview = useMemo(() => buildPlan(category, adDuration), [category, adDuration]);
@@ -81,6 +110,7 @@ export default function AdminAddListing() {
         setInitialListing(null);
         setCategory('mess');
         setAdDuration(7);
+        setMenuItems([]);
         setFormVersion((prev) => prev + 1);
         return;
       }
@@ -98,6 +128,8 @@ export default function AdminAddListing() {
 
         const data = snap.data() as Partial<Listing>;
         setInitialListing(data);
+        const inlineMenuItems = normalizeMenuItems((data.menuItems as Partial<MenuItem>[]) || []);
+        setMenuItems(inlineMenuItems);
 
         const loadedCategory = data.category;
         if (loadedCategory && CATEGORIES.includes(loadedCategory)) {
@@ -107,9 +139,16 @@ export default function AdminAddListing() {
           }
         }
 
+        const menuSnap = await getDocs(query(collection(db, 'menuItems'), where('listingId', '==', editId)));
+        if (menuSnap.docs.length > 0) {
+          const fetchedMenuItems = normalizeMenuItems(menuSnap.docs.map((itemDoc) => itemDoc.data() as Partial<MenuItem>));
+          if (fetchedMenuItems.length > 0) {
+            setMenuItems(fetchedMenuItems);
+          }
+        }
+
         setFormVersion((prev) => prev + 1);
       } catch (error: any) {
-        console.error('AdminAddListing: failed to load listing for edit', error);
         showToast(error?.message || 'Failed to load listing', 'error');
       } finally {
         if (active) setLoadingListing(false);
@@ -150,6 +189,23 @@ export default function AdminAddListing() {
 
   const removePhoto = (index: number) => {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addMenuItem = (item: DraftMenuItem) => {
+    setMenuItems((prev) => [
+      ...prev,
+      {
+        itemName: item.itemName,
+        price: Number(item.price),
+        type: item.type,
+        category: item.category,
+        servingDetails: item.servingDetails || ''
+      }
+    ]);
+  };
+
+  const removeMenuItem = (index: number) => {
+    setMenuItems((prev) => prev.filter((_, i) => i !== index));
   };
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -208,7 +264,8 @@ export default function AdminAddListing() {
         pricePlan: getNum('pricePlan', Number(initialListing?.pricePlan || plan.pricePlan)),
         duration,
         planType: (formData.get('planType') as ListingPlanType) || initialListing?.planType || plan.planType,
-        validUntil: isEditMode ? (initialListing?.validUntil || validUntil) : validUntil
+        validUntil: isEditMode ? (initialListing?.validUntil || validUntil) : validUntil,
+        lastUpdated: serverTimestamp()
       };
 
       if (parsedLocation) {
@@ -218,6 +275,9 @@ export default function AdminAddListing() {
       }
 
       if (category === 'mess') {
+        listing.monthlyRate = getNum('monthlyRate');
+        listing.weeklyRate = getNum('weeklyRate');
+        listing.perPlateRate = getNum('perPlateRate');
         listing.weeklyMenu = {
           monday: getText('menuMonday'),
           tuesday: getText('menuTuesday'),
@@ -230,18 +290,48 @@ export default function AdminAddListing() {
         listing.specialOccasionOffer = getText('specialOccasionOffer');
         listing.unlimitedAvailable = formData.get('unlimitedAvailable') === 'on';
         listing.unlimitedPrice = getNum('unlimitedPrice');
+        listing.menuItems = menuItems.map((item) => ({
+          itemName: item.itemName,
+          price: item.price,
+          type: item.type,
+          category: item.category,
+          servingDetails: toServingDetailsArray(item.servingDetails)
+        }));
       }
 
       if (category === 'pg' || category === 'hostel') {
         listing.roomTypes = getText('roomTypes');
         listing.pricePerMonth = getNum('pricePerMonth');
         listing.facilities = getText('facilities').split(',').map((v) => v.trim()).filter(Boolean);
+        listing.gender = getText('gender') || 'both';
+        listing.roomType = getText('roomType') || 'withCot';
+        listing.messAvailable = formData.get('messAvailable') === 'on';
+        listing.totalRooms = getNum('totalRooms');
+        listing.availableRooms = getNum('availableRooms');
       }
 
       if (category === 'hotel') {
-        listing.foodItems = getText('foodItems').split(',').map((v) => v.trim()).filter(Boolean);
         listing.specialOccasionOffer = getText('hotelSpecialOffer');
         listing.unlimitedAvailable = formData.get('hotelUnlimited') === 'on';
+        listing.menuItems = menuItems.map((item) => ({
+          itemName: item.itemName,
+          price: item.price,
+          type: item.type,
+          category: item.category,
+          servingDetails: toServingDetailsArray(item.servingDetails)
+        }));
+        listing.foodItems = menuItems.map((item) => item.itemName).filter(Boolean).join(', ');
+      }
+
+      if (category === 'shop') {
+        listing.menuItems = menuItems.map((item) => ({
+          itemName: item.itemName,
+          price: item.price,
+          type: item.type,
+          category: item.category,
+          servingDetails: toServingDetailsArray(item.servingDetails)
+        }));
+        listing.shopItems = menuItems.map((item) => item.itemName).filter(Boolean).join(', ');
       }
 
       if (category === 'block') {
@@ -290,20 +380,48 @@ export default function AdminAddListing() {
         }
       }
 
+      let listingId = editId;
       if (isEditMode) {
-        console.log('AdminAddListing: updating listing', editId, listing);
         await updateDoc(doc(db, 'listings', editId), listing as any);
-        showToast('Listing updated successfully', 'success');
       } else {
         listing.createdAt = serverTimestamp();
-        console.log('AdminAddListing: saving listing', listing);
-        await addDoc(collection(db, 'listings'), listing);
-        showToast('Listing added successfully', 'success');
+        const listingRef = await addDoc(collection(db, 'listings'), listing);
+        listingId = listingRef.id;
       }
 
+      if (listingId && (category === 'mess' || category === 'hotel' || category === 'shop') && menuItems.length > 0) {
+        const existingSnap = await getDocs(query(collection(db, 'menuItems'), where('listingId', '==', listingId)));
+        const existingKeys = new Set(
+          existingSnap.docs.map((docSnap) => {
+            const item = docSnap.data();
+            return `${String(item.itemName || '').toLowerCase()}|${Number(item.price || 0)}|${String(item.type || '')}|${String(item.category || '')}`;
+          })
+        );
+
+        for (const item of menuItems) {
+          const dedupeKey = `${item.itemName.toLowerCase()}|${item.price}|${item.type}|${item.category}`;
+          if (existingKeys.has(dedupeKey)) continue;
+
+          const menuRef = doc(collection(db, 'menuItems'));
+          const itemCategory = category === 'shop' ? 'shop' : 'food';
+          await setDoc(menuRef, {
+            itemName: item.itemName,
+            price: item.price,
+            type: item.type,
+            category: itemCategory,
+            servingDetails: toServingDetailsArray(item.servingDetails),
+            listingId,
+            listingName: listing.name || getText('name') || 'Listing',
+            location: getText('area') || getText('address') || '',
+            createdAt: serverTimestamp()
+          });
+          existingKeys.add(dedupeKey);
+        }
+      }
+
+      showToast(isEditMode ? 'Listing updated successfully' : 'Listing added successfully', 'success');
       navigate('/admin');
     } catch (error: any) {
-      console.error('AdminAddListing: failed to save listing', error);
       showToast(error?.message || 'Failed to save listing', 'error');
     } finally {
       setSaving(false);
@@ -356,6 +474,9 @@ export default function AdminAddListing() {
           {category === 'mess' && (
             <div className="space-y-3">
               <h3 className="font-bold">Mess Fields</h3>
+              <input name="monthlyRate" type="number" placeholder="Monthly Rate" className="input-field" defaultValue={initialListing?.monthlyRate || ''} />
+              <input name="weeklyRate" type="number" placeholder="Weekly Rate" className="input-field" defaultValue={initialListing?.weeklyRate || ''} />
+              <input name="perPlateRate" type="number" placeholder="Per Plate Rate" className="input-field" defaultValue={initialListing?.perPlateRate || ''} />
               <input name="menuMonday" placeholder="Monday menu" className="input-field" defaultValue={initialMenu.monday || initialMenu.Monday || ''} />
               <input name="menuTuesday" placeholder="Tuesday menu" className="input-field" defaultValue={initialMenu.tuesday || initialMenu.Tuesday || ''} />
               <input name="menuWednesday" placeholder="Wednesday menu" className="input-field" defaultValue={initialMenu.wednesday || initialMenu.Wednesday || ''} />
@@ -366,12 +487,44 @@ export default function AdminAddListing() {
               <input name="specialOccasionOffer" placeholder="Special Occasion Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="unlimitedAvailable" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
               <input name="unlimitedPrice" type="number" placeholder="Unlimited Price" className="input-field" defaultValue={initialListing?.unlimitedPrice || ''} />
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
+                {menuItems.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No menu items added yet.</p>
+                ) : (
+                  menuItems.map((item, index) => (
+                    <div key={`${item.itemName}-${item.price}-${index}`} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900/50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-sm">{item.itemName}</p>
+                          <p className="text-xs text-zinc-400">₹{item.price} · {item.type} · {item.category}</p>
+                          {item.servingDetails && <p className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{item.servingDetails}</p>}
+                        </div>
+                        <button type="button" className="text-xs text-red-400" onClick={() => removeMenuItem(index)}>Remove</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 
           {(category === 'pg' || category === 'hostel') && (
             <div className="space-y-3">
               <h3 className="font-bold">PG / Hostel Fields</h3>
+              <select name="gender" className="input-field" defaultValue={initialListing?.gender || 'both'}>
+                <option value="boys">Boys</option>
+                <option value="girls">Girls</option>
+                <option value="both">Both</option>
+              </select>
+              <select name="roomType" className="input-field" defaultValue={initialListing?.roomType || 'withCot'}>
+                <option value="withCot">With Cot</option>
+                <option value="withoutCot">Without Cot</option>
+              </select>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="messAvailable" defaultChecked={Boolean(initialListing?.messAvailable)} /> Mess Available</label>
+              <input name="totalRooms" type="number" placeholder="Total Rooms" className="input-field" defaultValue={initialListing?.totalRooms || ''} />
+              <input name="availableRooms" type="number" placeholder="Available Rooms" className="input-field" defaultValue={initialListing?.availableRooms || ''} />
               <input name="roomTypes" placeholder="Room Types" className="input-field" defaultValue={String((initialListing as any)?.roomTypes || '')} />
               <input name="pricePerMonth" type="number" placeholder="Price per month" className="input-field" defaultValue={initialListing?.pricePerMonth || ''} />
               <input name="facilities" placeholder="Facilities (comma separated)" className="input-field" defaultValue={Array.isArray((initialListing as any)?.facilities) ? (initialListing as any).facilities.join(', ') : ''} />
@@ -381,9 +534,55 @@ export default function AdminAddListing() {
           {category === 'hotel' && (
             <div className="space-y-3">
               <h3 className="font-bold">Hotel Fields</h3>
-              <input name="foodItems" placeholder="Food items (comma separated)" className="input-field" defaultValue={Array.isArray((initialListing as any)?.foodItems) ? (initialListing as any).foodItems.join(', ') : ''} />
               <input name="hotelSpecialOffer" placeholder="Special Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="hotelUnlimited" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
+                {menuItems.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No food items added yet.</p>
+                ) : (
+                  menuItems.map((item, index) => (
+                    <div key={`${item.itemName}-${item.price}-${index}`} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900/50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-sm">{item.itemName}</p>
+                          <p className="text-xs text-zinc-400">₹{item.price} · {item.type} · {item.category}</p>
+                          {item.servingDetails && <p className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{item.servingDetails}</p>}
+                        </div>
+                        <button type="button" className="text-xs text-red-400" onClick={() => removeMenuItem(index)}>Remove</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {category === 'shop' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Shop Items</h3>
+              <p className="text-xs text-zinc-500">Add item name and price (stationery, medical, grocery, etc.)</p>
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
+                {menuItems.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No shop items added yet.</p>
+                ) : (
+                  menuItems.map((item, index) => (
+                    <div key={`${item.itemName}-${item.price}-${index}`} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900/50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-sm">{item.itemName}</p>
+                          <p className="text-xs text-zinc-400">₹{item.price}</p>
+                          {item.servingDetails && <p className="text-xs text-zinc-500 mt-1 whitespace-pre-wrap">{item.servingDetails}</p>}
+                        </div>
+                        <button type="button" className="text-xs text-red-400" onClick={() => removeMenuItem(index)}>Remove</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 

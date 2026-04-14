@@ -1,8 +1,8 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, increment, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, increment, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Listing } from '../types';
+import { Listing, MenuItem } from '../types';
 import { ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { CATEGORY_LABELS } from '../constants';
@@ -29,6 +29,21 @@ const getMenuForDay = (listing: Listing, dayLower: string) => {
   return String(menu[dayLower as keyof typeof menu] || menu[titleCase as keyof typeof menu] || '');
 };
 
+const toSafeDate = (value: any) => {
+  const date = value?.toDate?.() || (value ? new Date(value) : null);
+  if (!date || !Number.isFinite(date.getTime())) return null;
+  return date;
+};
+
+const formatLastUpdated = (value: any) => {
+  const date = toSafeDate(value);
+  if (!date) return 'Last updated: Not available';
+  const diffDays = Math.max(0, Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
+  if (diffDays === 0) return 'Last updated: Today';
+  if (diffDays === 1) return 'Last updated: 1 day ago';
+  return `Last updated: ${diffDays} days ago`;
+};
+
 const getListingMapUrl = (listing: Listing) => {
   const lat = listing.location?.lat;
   const lng = listing.location?.lng;
@@ -46,6 +61,8 @@ export default function ListingDetail() {
   const { user } = useAuth();
   const { showToast } = useToast();
   const [listing, setListing] = useState<Listing | null>(null);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [loadingMenuItems, setLoadingMenuItems] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userRating, setUserRating] = useState(0);
   const [submittingRating, setSubmittingRating] = useState(false);
@@ -53,12 +70,10 @@ export default function ListingDetail() {
   useEffect(() => {
     const load = async () => {
       if (!listingId) {
-        console.log('Listing ID:', listingId);
         setLoading(false);
         return;
       }
       try {
-        console.log('Listing ID:', listingId);
         const ref = doc(db, 'listings', listingId);
         const [snap, ratingSnap] = await Promise.all([
           getDoc(ref),
@@ -71,13 +86,53 @@ export default function ListingDetail() {
         }
 
         const data = { id: snap.id, ...snap.data() } as Listing;
-        console.log('ListingDetail: loaded listing', data.id, data.name);
         setListing(data);
+        setLoadingMenuItems(true);
+
+        try {
+          const menuSnap = await getDocs(query(collection(db, 'menuItems'), where('listingId', '==', listingId)));
+          if (!menuSnap.empty) {
+            const fetchedItems = menuSnap.docs.map((menuDoc) => ({ id: menuDoc.id, ...menuDoc.data() } as MenuItem));
+            setMenuItems(fetchedItems);
+          } else {
+            const inlineItems = Array.isArray((data as any).menuItems) ? (data as any).menuItems : [];
+            setMenuItems(
+              inlineItems.map((item: any, index: number) => ({
+                id: `inline-${index}`,
+                itemName: String(item.itemName || ''),
+                price: Number(item.price || 0),
+                type: item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg',
+                category: item.category || 'Other',
+                servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails : [],
+                listingId,
+                listingName: data.name || '',
+                location: data.area || data.address || ''
+              }))
+            );
+          }
+        } catch {
+          const inlineItems = Array.isArray((data as any).menuItems) ? (data as any).menuItems : [];
+          setMenuItems(
+            inlineItems.map((item: any, index: number) => ({
+              id: `inline-${index}`,
+              itemName: String(item.itemName || ''),
+              price: Number(item.price || 0),
+              type: item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg',
+              category: item.category || 'Other',
+              servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails : [],
+              listingId,
+              listingName: data.name || '',
+              location: data.area || data.address || ''
+            }))
+          );
+        } finally {
+          setLoadingMenuItems(false);
+        }
 
         try {
           await updateDoc(ref, { totalViews: increment(1) });
-        } catch (viewError) {
-          console.warn('ListingDetail: failed to increment views', viewError);
+        } catch {
+          // non-blocking analytics update
         }
 
         if (ratingSnap?.exists()) {
@@ -86,7 +141,6 @@ export default function ListingDetail() {
           setUserRating(0);
         }
       } catch (error: any) {
-        console.error('ListingDetail: failed to load listing', error);
         showToast(error?.message || 'Failed to load listing', 'error');
       } finally {
         setLoading(false);
@@ -103,6 +157,8 @@ export default function ListingDetail() {
   const todayLower = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date()).toLowerCase();
   const todayTitle = todayLower.charAt(0).toUpperCase() + todayLower.slice(1);
   const todayMenuItems = formatMenuItems(getMenuForDay(listing, todayLower));
+  const normalizedMenuItems = menuItems.filter((item) => item.itemName && Number.isFinite(Number(item.price)));
+  const todayMenuFromItems = normalizedMenuItems.slice(0, 8);
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(window.location.href);
@@ -138,7 +194,6 @@ export default function ListingDetail() {
       setListing((prev) => (prev ? { ...prev, avgRating, totalRatings } : prev));
       showToast('Rating submitted', 'success');
     } catch (error: any) {
-      console.error('ListingDetail: failed to submit rating', error);
       showToast(error?.message || 'Failed to submit rating', 'error');
     } finally {
       setSubmittingRating(false);
@@ -168,6 +223,7 @@ export default function ListingDetail() {
           <h1 className="text-2xl font-bold">{listing.name}</h1>
           <p className="text-zinc-500 text-sm mt-1">{listing.phone}</p>
           <p className="text-zinc-500 text-sm flex items-center gap-1 mt-1"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege}</p>
+          <p className="text-zinc-500 text-xs mt-2">{formatLastUpdated(listing.lastUpdated || listing.createdAt)}</p>
           <div className="mt-4 flex items-center gap-4 text-sm">
             <span className="text-yellow-500 font-bold flex items-center gap-1"><Star size={14} fill="currentColor" /> {(listing.avgRating || 0).toFixed(1)} ({listing.totalRatings || 0})</span>
             <span className="text-zinc-500 font-bold flex items-center gap-1"><Eye size={14} /> {listing.totalViews || 0}</span>
@@ -207,15 +263,51 @@ export default function ListingDetail() {
           </div>
         </div>
 
+        {(listing.category === 'mess' || listing.category === 'hotel') && (
+          <div className="card space-y-3">
+            <h3 className="font-bold text-lg">Menu</h3>
+            {loadingMenuItems ? (
+              <p className="text-sm text-zinc-500">Loading menu items...</p>
+            ) : normalizedMenuItems.length === 0 ? (
+              <p className="text-sm text-zinc-500">Menu not available right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {normalizedMenuItems.map((item) => (
+                  <div key={item.id || `${item.itemName}-${item.price}`} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900/50">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-semibold">{item.itemName}</p>
+                      <p className="font-bold text-primary">₹{Number(item.price)}</p>
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-1">{item.type} · {item.category}</p>
+                    {Array.isArray(item.servingDetails) && item.servingDetails.length > 0 && (
+                      <ul className="mt-2 list-disc pl-5 text-xs text-zinc-400 space-y-1">
+                        {item.servingDetails.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {listing.category === 'mess' && (
           <div className="space-y-4">
             <div className="card border-primary/50 bg-primary/10">
-              <h3 className="text-xl font-bold text-primary">🍛 Today&apos;s Menu</h3>
+              <h3 className="text-xl font-bold text-primary">Today&apos;s Menu</h3>
               <p className="text-zinc-400 text-xs mt-1">{todayTitle}</p>
-              {todayMenuItems.length > 0 ? (
+              {todayMenuFromItems.length > 0 ? (
+                <ul className="mt-3 space-y-2 text-sm text-zinc-200">
+                  {todayMenuFromItems.map((item) => (
+                    <li key={item.id || item.itemName}>{item.itemName}</li>
+                  ))}
+                </ul>
+              ) : todayMenuItems.length > 0 ? (
                 <ul className="mt-3 space-y-2 text-sm text-zinc-200">
                   {todayMenuItems.map((item) => (
-                    <li key={item}>- {item}</li>
+                    <li key={item}>{item}</li>
                   ))}
                 </ul>
               ) : (
@@ -224,7 +316,16 @@ export default function ListingDetail() {
             </div>
 
             <div className="card">
-              <h3 className="text-lg font-bold">📅 Weekly Menu</h3>
+              <h3 className="text-lg font-bold">Mess Rates</h3>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Monthly: {listing.monthlyRate ? `₹${listing.monthlyRate}` : 'N/A'}</p>
+                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Weekly: {listing.weeklyRate ? `₹${listing.weeklyRate}` : 'N/A'}</p>
+                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Per Plate: {listing.perPlateRate ? `₹${listing.perPlateRate}` : 'N/A'}</p>
+              </div>
+            </div>
+
+            <div className="card">
+              <h3 className="text-lg font-bold">Weekly Menu</h3>
               <div className="mt-3 space-y-2">
                 {dayOrder.map((day) => {
                   const menuText = getMenuForDay(listing, day);
@@ -237,6 +338,19 @@ export default function ListingDetail() {
                 })}
               </div>
             </div>
+          </div>
+        )}
+
+        {(listing.category === 'pg' || listing.category === 'hostel') && (
+          <div className="card space-y-2">
+            <h3 className="font-bold text-lg">Stay Details</h3>
+            <p className="text-sm text-zinc-300">Gender: {listing.gender || 'both'}</p>
+            <p className="text-sm text-zinc-300">Room type: {listing.roomType || 'withCot'}</p>
+            <p className="text-sm text-zinc-300">Mess: {listing.messAvailable ? 'Available' : 'Not available'}</p>
+            <p className="text-sm text-zinc-300">Price: {listing.pricePerMonth ? `₹${listing.pricePerMonth}` : 'Contact for price'}</p>
+            <p className="text-sm text-zinc-300">
+              {Number.isFinite(Number(listing.availableRooms)) ? `${Number(listing.availableRooms)} rooms left` : 'Room availability not shared'}
+            </p>
           </div>
         )}
 

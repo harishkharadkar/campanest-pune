@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, increment, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
 import { ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
@@ -73,12 +73,10 @@ export default function ListingDetail() {
         setLoading(false);
         return;
       }
+
       try {
         const ref = doc(db, 'listings', listingId);
-        const [snap, ratingSnap] = await Promise.all([
-          getDoc(ref),
-          user?.uid ? getDoc(doc(db, 'listings', listingId, 'ratings', user.uid)) : Promise.resolve(null)
-        ]);
+        const snap = await getDoc(ref);
 
         if (!snap.exists()) {
           setListing(null);
@@ -129,17 +127,7 @@ export default function ListingDetail() {
           setLoadingMenuItems(false);
         }
 
-        try {
-          await updateDoc(ref, { totalViews: increment(1) });
-        } catch {
-          // non-blocking analytics update
-        }
-
-        if (ratingSnap?.exists()) {
-          setUserRating(Number(ratingSnap.data().stars) || 0);
-        } else {
-          setUserRating(0);
-        }
+        setUserRating(0);
       } catch (error: any) {
         showToast(error?.message || 'Failed to load listing', 'error');
       } finally {
@@ -148,7 +136,7 @@ export default function ListingDetail() {
     };
 
     void load();
-  }, [listingId, user?.uid, showToast]);
+  }, [listingId, showToast]);
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-background text-zinc-500">Loading...</div>;
   if (!listing) return <div className="h-screen flex items-center justify-center bg-background text-zinc-500">Listing not found</div>;
@@ -160,38 +148,31 @@ export default function ListingDetail() {
   const normalizedMenuItems = menuItems.filter((item) => item.itemName && Number.isFinite(Number(item.price)));
   const todayMenuFromItems = normalizedMenuItems.slice(0, 8);
 
+  const displayedAverageRating = Number(listing.averageRating ?? listing.avgRating ?? 0);
+  const displayedTotalRatings = Number(listing.totalRatings ?? 0);
+  const displayedViews = Number(listing.views ?? listing.totalViews ?? 0);
+
   const copyLink = async () => {
     await navigator.clipboard.writeText(window.location.href);
     showToast('Link copied', 'success');
   };
 
   const handleRate = async (stars: number) => {
-    if (!listingId || !user?.uid || !listing) return;
+    if (!listingId || !listing) return;
+    if (!user?.uid) {
+      showToast('Please login to rate this listing', 'error');
+      return;
+    }
 
     setSubmittingRating(true);
     try {
-      const ratingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
-      await setDoc(
-        ratingRef,
-        {
-          uid: user.uid,
-          stars,
-          createdAt: serverTimestamp()
-        },
-        { merge: true }
-      );
-
-      const ratingsSnap = await getDocs(collection(db, 'listings', listingId, 'ratings'));
-      const totalRatings = ratingsSnap.size;
-      const totalStars = ratingsSnap.docs.reduce((sum, ratingDoc) => {
-        return sum + (Number(ratingDoc.data().stars) || 0);
-      }, 0);
-      const avgRating = totalRatings ? Number((totalStars / totalRatings).toFixed(1)) : 0;
-
-      await updateDoc(doc(db, 'listings', listingId), { avgRating, totalRatings });
-
+      await addDoc(collection(db, 'ratings'), {
+        listingId,
+        userId: user.uid,
+        rating: stars,
+        createdAt: new Date()
+      });
       setUserRating(stars);
-      setListing((prev) => (prev ? { ...prev, avgRating, totalRatings } : prev));
       showToast('Rating submitted', 'success');
     } catch (error: any) {
       showToast(error?.message || 'Failed to submit rating', 'error');
@@ -225,8 +206,8 @@ export default function ListingDetail() {
           <p className="text-zinc-500 text-sm flex items-center gap-1 mt-1"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege}</p>
           <p className="text-zinc-500 text-xs mt-2">{formatLastUpdated(listing.lastUpdated || listing.createdAt)}</p>
           <div className="mt-4 flex items-center gap-4 text-sm">
-            <span className="text-yellow-500 font-bold flex items-center gap-1"><Star size={14} fill="currentColor" /> {(listing.avgRating || 0).toFixed(1)} ({listing.totalRatings || 0})</span>
-            <span className="text-zinc-500 font-bold flex items-center gap-1"><Eye size={14} /> {listing.totalViews || 0}</span>
+            <span className="text-yellow-500 font-bold flex items-center gap-1"><Star size={14} fill="currentColor" /> {displayedAverageRating.toFixed(1)} ({displayedTotalRatings})</span>
+            <span className="text-zinc-500 font-bold flex items-center gap-1"><Eye size={14} /> {displayedViews}</span>
           </div>
           <div className="mt-3">
             <div className="flex items-center gap-1 text-yellow-500">
@@ -234,10 +215,10 @@ export default function ListingDetail() {
                 <Star
                   key={`avg-${star}`}
                   size={20}
-                  fill={star <= Math.round(listing.avgRating || 0) ? 'currentColor' : 'none'}
+                  fill={star <= Math.round(displayedAverageRating) ? 'currentColor' : 'none'}
                 />
               ))}
-              <span className="text-zinc-400 text-xs ml-2">({listing.totalRatings || 0} ratings)</span>
+              <span className="text-zinc-400 text-xs ml-2">({displayedTotalRatings} ratings)</span>
             </div>
             <p className="text-zinc-400 text-xs mt-2">
               {userRating > 0 ? `Your rating: ${'★'.repeat(userRating)}${'☆'.repeat(5 - userRating)}` : 'Tap to rate'}

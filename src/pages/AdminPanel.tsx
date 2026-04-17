@@ -1,9 +1,9 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { collection, deleteDoc, doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
-import { Listing } from '../types';
+import { Listing, Rating } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { addDays, format } from 'date-fns';
@@ -14,6 +14,7 @@ export default function AdminPanel() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const [listings, setListings] = useState<Listing[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredListings, setFilteredListings] = useState<Listing[]>([]);
   const [category, setCategory] = useState('all');
@@ -33,12 +34,24 @@ export default function AdminPanel() {
         return tB - tA;
       });
       setListings(rows);
-    }, (error) => {
-      console.error('AdminPanel: failed to fetch listings', error);
+    }, () => {
       showToast('Failed to fetch listings', 'error');
     });
+
     return () => unsub();
   }, [showToast]);
+
+  useEffect(() => {
+    const ratingsQuery = query(collection(db, 'ratings'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(ratingsQuery, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Rating));
+      setRatings(rows);
+    }, () => {
+      setRatings([]);
+    });
+
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const term = searchQuery.trim().toLowerCase();
@@ -74,7 +87,6 @@ export default function AdminPanel() {
       await updateDoc(doc(db, 'listings', id), data as any);
       showToast('Updated', 'success');
     } catch (error: any) {
-      console.error('AdminPanel: failed to update listing', error);
       showToast(error.message || 'Update failed', 'error');
     }
   };
@@ -85,7 +97,6 @@ export default function AdminPanel() {
       const next = addDays(base > new Date() ? base : new Date(), days);
       await save(l.id, { validUntil: next, duration: (l.duration || 0) + days });
     } catch (error: any) {
-      console.error('AdminPanel: failed to extend listing validity', error);
       showToast(error.message || 'Failed to extend validity', 'error');
     }
   };
@@ -96,8 +107,18 @@ export default function AdminPanel() {
       await deleteDoc(doc(db, 'listings', id));
       showToast('Listing deleted', 'success');
     } catch (error: any) {
-      console.error('AdminPanel: failed to delete listing', error);
       showToast(error.message || 'Delete failed', 'error');
+    }
+  };
+
+  const deleteRating = async (ratingId: string) => {
+    if (!ratingId) return;
+    if (!confirm('Delete this rating?')) return;
+    try {
+      await deleteDoc(doc(db, 'ratings', ratingId));
+      showToast('Rating deleted', 'success');
+    } catch (error: any) {
+      showToast(error.message || 'Failed to delete rating', 'error');
     }
   };
 
@@ -136,6 +157,28 @@ export default function AdminPanel() {
           </div>
         </div>
 
+        <section className="space-y-2 border border-zinc-800 rounded-lg p-3">
+          <h4 className="text-xs font-bold tracking-wide text-zinc-400 uppercase">Ratings Moderation</h4>
+          {ratings.length === 0 ? (
+            <p className="text-xs text-zinc-500">No ratings found.</p>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {ratings.slice(0, 50).map((rating) => (
+                <div key={rating.id} className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+                  <div className="text-xs text-zinc-300">
+                    <p>Listing: {rating.listingId || '-'}</p>
+                    <p>User: {rating.userId || '-'}</p>
+                    <p>Rating: {Number(rating.rating || 0)}</p>
+                  </div>
+                  <button className="text-red-500 text-xs font-semibold hover:text-red-400" onClick={() => deleteRating(String(rating.id || ''))}>
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {filteredListings.length === 0 && (
           <div className="card border-zinc-800 text-center py-12">
             <h3 className="text-xl font-bold">No listings found</h3>
@@ -146,6 +189,9 @@ export default function AdminPanel() {
           const cat = l.category || 'unknown';
           const expiry = l.validUntil?.toDate?.();
           const expired = expiry ? expiry.getTime() < Date.now() : false;
+          const currentViews = Number(l.views ?? l.totalViews ?? 0);
+          const currentAverageRating = Number(l.averageRating ?? l.avgRating ?? 0);
+          const currentTotalRatings = Number(l.totalRatings ?? 0);
 
           return (
             <div key={l.id} className="card space-y-5 border-zinc-800">
@@ -174,20 +220,42 @@ export default function AdminPanel() {
                 <h4 className="text-xs font-bold tracking-wide text-zinc-400 uppercase">Analytics</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                   <label className="space-y-1">
-                    <span className="text-xs text-zinc-400">Total Views</span>
-                    <input type="number" className="input-field" defaultValue={l.totalViews || 0} onBlur={(e) => save(l.id, { totalViews: Number(e.target.value) })} />
+                    <span className="text-xs text-zinc-400">Views</span>
+                    <input
+                      type="number"
+                      className="input-field"
+                      defaultValue={currentViews}
+                      onBlur={(e) => {
+                        const value = Number(e.target.value || 0);
+                        save(l.id, { views: value, totalViews: value });
+                      }}
+                    />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs text-zinc-400">Average Rating</span>
-                    <input type="number" step="0.1" className="input-field" defaultValue={l.avgRating || 0} onBlur={(e) => save(l.id, { avgRating: Number(e.target.value) })} />
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="input-field"
+                      defaultValue={currentAverageRating}
+                      onBlur={(e) => {
+                        const value = Number(e.target.value || 0);
+                        save(l.id, { averageRating: value, avgRating: value });
+                      }}
+                    />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs text-zinc-400">Total Ratings</span>
-                    <input type="number" className="input-field" defaultValue={l.totalRatings || 0} onBlur={(e) => save(l.id, { totalRatings: Number(e.target.value) })} />
+                    <input
+                      type="number"
+                      className="input-field"
+                      defaultValue={currentTotalRatings}
+                      onBlur={(e) => save(l.id, { totalRatings: Number(e.target.value || 0) })}
+                    />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs text-zinc-400">Priority Score</span>
-                    <input type="number" className="input-field" defaultValue={l.priorityScore || 0} onBlur={(e) => save(l.id, { priorityScore: Number(e.target.value) })} />
+                    <input type="number" className="input-field" defaultValue={l.priorityScore || 0} onBlur={(e) => save(l.id, { priorityScore: Number(e.target.value || 0) })} />
                   </label>
                 </div>
                 <p className="text-[11px] text-zinc-500">Higher value appears higher in listings.</p>
@@ -198,7 +266,7 @@ export default function AdminPanel() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                   <label className="space-y-1">
                     <span className="text-xs text-zinc-400">Price Plan</span>
-                    <input type="number" className="input-field" defaultValue={l.pricePlan || 0} onBlur={(e) => save(l.id, { pricePlan: Number(e.target.value) })} />
+                    <input type="number" className="input-field" defaultValue={l.pricePlan || 0} onBlur={(e) => save(l.id, { pricePlan: Number(e.target.value || 0) })} />
                   </label>
                   <label className="space-y-1">
                     <span className="text-xs text-zinc-400">Plan Type</span>

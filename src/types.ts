@@ -44,6 +44,14 @@ export interface MenuItem {
   createdAt?: any;
 }
 
+export interface Rating {
+  id?: string;
+  listingId: string;
+  userId: string;
+  rating: number;
+  createdAt: any;
+}
+
 export interface ProviderProfile {
   uid: string;
   businessName: string;
@@ -88,9 +96,11 @@ export interface Listing {
   active: boolean;
   createdAt: any;
   validUntil: any;
-  totalViews: number;
-  avgRating: number;
-  totalRatings: number;
+  totalViews?: number;
+  views?: number;
+  avgRating?: number;
+  averageRating?: number;
+  totalRatings?: number;
   pricePlan: number;
   duration?: number;
   planType?: ListingPlanType;

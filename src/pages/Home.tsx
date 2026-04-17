@@ -125,7 +125,6 @@ export default function Home() {
           return tB - tA;
         });
 
-        console.log('listingsData', activeRows);
         setAllListings(activeRows);
       } catch (error: any) {
         showToast(error?.message || 'Failed to fetch listings', 'error');
@@ -143,7 +142,6 @@ export default function Home() {
       try {
         const snap = await getDocs(query(collection(db, 'menuItems'), limit(MENU_ITEMS_FETCH_LIMIT)));
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem));
-        console.log('menuData', rows);
         setAllMenuItems(rows);
       } catch {
         setAllMenuItems([]);
@@ -202,10 +200,6 @@ export default function Home() {
     return [...listings, ...itemResults];
   }, [itemResults, listings, searchTerm]);
 
-  useEffect(() => {
-    console.log('finalResults', mergedResults);
-  }, [mergedResults]);
-
   const isLoadingResults = loadingListings || (searchTerm ? loadingMenuItems : false);
 
   const selectedCategoryDescription = category === 'all'
@@ -213,9 +207,9 @@ export default function Home() {
     : (CATEGORY_DESCRIPTIONS[category] || '');
 
   const renderListingCard = (listing: Listing) => {
-    const avgRating = Number(listing.avgRating || 0);
+    const avgRating = Number(listing.averageRating ?? listing.avgRating ?? 0);
     const totalRatings = Number(listing.totalRatings || 0);
-    const totalViews = Number(listing.totalViews || 0);
+    const totalViews = Number(listing.views ?? listing.totalViews ?? 0);
     const availableRooms = Number((listing as any).availableRooms || 0);
     const showRooms = listing.category === 'pg' || listing.category === 'flat';
     const contactNumber = getContactNumber(listing);

@@ -1,9 +1,42 @@
-rules_version = '2';
+﻿rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Test mode rules for fast local debugging.
+
+    match /listings/{listingId} {
+      allow read: if true;
+
+      // Only admin can modify listings
+      allow create, update, delete: if request.auth != null
+        && request.auth.token.email == "campanest7@gmail.com";
+    }
+
+    match /ratings/{ratingId} {
+      allow read: if true;
+
+      // Students can add rating
+      allow create: if request.auth != null;
+
+      // Admin can delete fake ratings
+      allow delete: if request.auth != null
+        && request.auth.token.email == "campanest7@gmail.com";
+
+      // No updates allowed
+      allow update: if false;
+    }
+
+    match /menuItems/{menuItemId} {
+      allow read: if true;
+      allow create, update, delete: if request.auth != null
+        && request.auth.token.email == "campanest7@gmail.com";
+    }
+
+    match /users/{userId} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == userId;
+    }
+
     match /{document=**} {
-      allow read, write: if true;
+      allow read: if true;
     }
   }
 }

@@ -254,7 +254,9 @@ export default function AdminAddListing() {
         providerId: initialListing?.providerId || 'admin-managed',
 
         totalViews: getNum('totalViews', Number(initialListing?.totalViews || 0)),
+        views: getNum('totalViews', Number((initialListing as any)?.views || initialListing?.totalViews || 0)),
         avgRating: getNum('avgRating', Number(initialListing?.avgRating || 0)),
+        averageRating: getNum('avgRating', Number((initialListing as any)?.averageRating || initialListing?.avgRating || 0)),
         totalRatings: getNum('totalRatings', Number(initialListing?.totalRatings || 0)),
         priorityScore: getNum('priorityScore', Number(initialListing?.priorityScore || 50)),
         isFeatured: formData.get('isFeatured') === 'on',

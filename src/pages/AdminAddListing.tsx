@@ -1,18 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
-import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { addDays } from 'date-fns';
 import { ChevronLeft, Upload, X } from 'lucide-react';
-import { db, storage } from '../lib/firebase';
+import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
 import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
 import { Listing, ListingCategory, ListingPlanType, MenuItem } from '../types';
+import { optimizeCloudinaryUrl, uploadImage } from '../lib/cloudinary';
 
 const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
 ];
+const MULTI_IMAGE_CATEGORIES: ListingCategory[] = ['pg', 'flat', 'hostel'];
+const SINGLE_IMAGE_CATEGORIES: ListingCategory[] = ['secondhand', 'advertisement'];
+const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
 
 type LocalMenuItem = {
   itemName: string;
@@ -27,7 +30,7 @@ const normalizeMenuItems = (items: Partial<MenuItem>[] = []): LocalMenuItem[] =>
     .map((item) => ({
       itemName: String(item.itemName || '').trim(),
       price: Number(item.price || 0),
-      type: item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg',
+      type: (item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg') as LocalMenuItem['type'],
       category: ['Thali', 'Combo', 'Main', 'Other'].includes(String(item.category)) ? (item.category as LocalMenuItem['category']) : 'Other',
       servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails.join('\n') : ''
     }))
@@ -81,6 +84,13 @@ const toLocationInputValue = (listing?: Partial<Listing> | null) => {
   const lng = listing?.location?.lng;
   if (typeof lat !== 'number' || typeof lng !== 'number') return '';
   return `${lat}, ${lng}`;
+};
+
+const getListingImages = (listing?: Partial<Listing> | null) => {
+  if (!listing) return [] as string[];
+  const fromImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
+  const fromPhotos = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
+  return [...fromImages, ...fromPhotos].map((url) => optimizeCloudinaryUrl(String(url || ''))).filter(Boolean);
 };
 
 export default function AdminAddListing() {
@@ -162,34 +172,26 @@ export default function AdminAddListing() {
     };
   }, [editId, isEditMode, navigate, showToast]);
 
-  const uploadPhoto = async (file: File, path: string) => {
-    const projectId = storage.app.options.projectId || 'campanestpune';
-    const buckets = [`${projectId}.firebasestorage.app`, `${projectId}.appspot.com`];
-    let lastError: any = null;
-
-    for (const bucket of buckets) {
-      try {
-        const bucketStorage = getStorage(storage.app, `gs://${bucket}`);
-        const photoRef = ref(bucketStorage, path);
-        await uploadBytes(photoRef, file);
-        return await getDownloadURL(photoRef);
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    throw lastError;
-  };
-
   const onPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!allowsImages) return;
     if (!e.target.files) return;
-    const incoming = Array.from(e.target.files);
-    setPhotos((prev) => [...prev, ...incoming].slice(0, 8));
+    const incoming = Array.from(e.target.files as FileList) as File[];
+    console.log('[AdminAddListing] file selected', incoming.map((file: File) => ({
+      name: file.name,
+      size: file.size,
+      type: file.type
+    })));
+    setPhotos((prev) => [...prev, ...incoming].slice(0, photoLimit));
   };
 
   const removePhoto = (index: number) => {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const allowsMultipleImages = MULTI_IMAGE_CATEGORIES.includes(category);
+  const allowsSingleImage = SINGLE_IMAGE_CATEGORIES.includes(category);
+  const allowsImages = allowsMultipleImages || allowsSingleImage;
+  const photoLimit = allowsSingleImage ? 1 : 5;
 
   const addMenuItem = (item: DraftMenuItem) => {
     setMenuItems((prev) => [
@@ -225,17 +227,17 @@ export default function AdminAddListing() {
       const closedTillRaw = getText('closedTill');
 
       const photoUrls: string[] = [];
-      for (const photo of photos) {
-        try {
-          const safeName = photo.name.replace(/\s+/g, '_');
-          const url = await uploadPhoto(photo, `listings/admin/${Date.now()}_${safeName}`);
-          photoUrls.push(url);
-        } catch {
-          // allow save without blocked photos
+      if (allowsImages && photos.length > 0) {
+        for (const photo of photos.slice(0, photoLimit)) {
+          const url = await uploadImage(photo);
+          if (url) photoUrls.push(optimizeCloudinaryUrl(url));
         }
       }
 
-      const existingPhotos = Array.isArray(initialListing?.photos) ? initialListing.photos : [];
+      const existingImages = getListingImages(initialListing);
+      const finalImages = allowsImages
+        ? (photoUrls.length > 0 ? photoUrls : existingImages).slice(0, photoLimit)
+        : [];
       const plan = buildPlan(category, adDuration);
       const durationDefault = isEditMode ? Number(initialListing?.duration || plan.duration) : 30;
       const duration = getNum('duration', durationDefault);
@@ -250,7 +252,8 @@ export default function AdminAddListing() {
         phone: getText('phone'),
         whatsapp: getText('whatsapp'),
         description: getText('description'),
-        photos: photoUrls.length > 0 ? photoUrls : existingPhotos,
+        images: finalImages,
+        photos: finalImages,
         providerId: initialListing?.providerId || 'admin-managed',
 
         totalViews: getNum('totalViews', Number(initialListing?.totalViews || 0)),
@@ -276,6 +279,18 @@ export default function AdminAddListing() {
         listing.location = deleteField();
       }
 
+      if (!allowsImages) {
+        if (isEditMode) {
+          listing.images = deleteField();
+          listing.photos = deleteField();
+          listing.image = deleteField();
+          if (category !== 'advertisement') listing.bannerImage = deleteField();
+        } else {
+          listing.images = [];
+          listing.photos = [];
+        }
+      }
+
       if (category === 'mess') {
         listing.monthlyRate = getNum('monthlyRate');
         listing.weeklyRate = getNum('weeklyRate');
@@ -299,17 +314,26 @@ export default function AdminAddListing() {
           category: item.category,
           servingDetails: toServingDetailsArray(item.servingDetails)
         }));
+        listing.items = menuItems
+          .filter((item) => item.itemName && Number(item.price) > 0)
+          .map((item) => ({
+            name: item.itemName,
+            price: Number(item.price),
+            description: String(item.servingDetails || '')
+          }));
       }
 
-      if (category === 'pg' || category === 'hostel') {
+      if (category === 'pg' || category === 'hostel' || category === 'flat') {
         listing.roomTypes = getText('roomTypes');
         listing.pricePerMonth = getNum('pricePerMonth');
+        listing.price = listing.pricePerMonth;
         listing.facilities = getText('facilities').split(',').map((v) => v.trim()).filter(Boolean);
         listing.gender = getText('gender') || 'both';
         listing.roomType = getText('roomType') || 'withCot';
         listing.messAvailable = formData.get('messAvailable') === 'on';
         listing.totalRooms = getNum('totalRooms');
         listing.availableRooms = getNum('availableRooms');
+        listing.roomsAvailable = listing.availableRooms;
       }
 
       if (category === 'hotel') {
@@ -322,6 +346,13 @@ export default function AdminAddListing() {
           category: item.category,
           servingDetails: toServingDetailsArray(item.servingDetails)
         }));
+        listing.items = menuItems
+          .filter((item) => item.itemName && Number(item.price) > 0)
+          .map((item) => ({
+            name: item.itemName,
+            price: Number(item.price),
+            description: String(item.servingDetails || '')
+          }));
         listing.foodItems = menuItems.map((item) => item.itemName).filter(Boolean).join(', ');
       }
 
@@ -333,7 +364,18 @@ export default function AdminAddListing() {
           category: item.category,
           servingDetails: toServingDetailsArray(item.servingDetails)
         }));
+        listing.items = menuItems
+          .filter((item) => item.itemName && Number(item.price) > 0)
+          .map((item) => ({
+            name: item.itemName,
+            price: Number(item.price),
+            description: String(item.servingDetails || '')
+          }));
         listing.shopItems = menuItems.map((item) => item.itemName).filter(Boolean).join(', ');
+      }
+
+      if (!FOOD_AND_SHOP_CATEGORIES.includes(category) && isEditMode) {
+        listing.items = deleteField();
       }
 
       if (category === 'block') {
@@ -356,11 +398,21 @@ export default function AdminAddListing() {
         listing.itemName = getText('itemName');
         listing.price = getNum('itemPrice');
         listing.condition = getText('condition').toLowerCase() || 'used';
+        listing.image = (photoUrls[0] || existingImages[0] || '').trim();
+        if (listing.image) {
+          listing.images = [listing.image];
+          listing.photos = [listing.image];
+        }
       }
 
       if (category === 'advertisement') {
         listing.title = getText('title');
-        listing.bannerImage = photoUrls[0] || initialListing?.bannerImage || '';
+        listing.bannerImage = (photoUrls[0] || String(initialListing?.bannerImage || '') || existingImages[0] || '').trim();
+        listing.image = listing.bannerImage;
+        if (listing.bannerImage) {
+          listing.images = [listing.bannerImage];
+          listing.photos = [listing.bannerImage];
+        }
       }
 
       if (category === 'doctor') {
@@ -383,6 +435,7 @@ export default function AdminAddListing() {
       }
 
       let listingId = editId;
+      console.log('[AdminAddListing] firestore save payload', listing);
       if (isEditMode) {
         await updateDoc(doc(db, 'listings', editId), listing as any);
       } else {
@@ -390,6 +443,7 @@ export default function AdminAddListing() {
         const listingRef = await addDoc(collection(db, 'listings'), listing);
         listingId = listingRef.id;
       }
+      console.log('[AdminAddListing] firestore save success', { listingId, mode: isEditMode ? 'edit' : 'create' });
 
       if (listingId && (category === 'mess' || category === 'hotel' || category === 'shop') && menuItems.length > 0) {
         const existingSnap = await getDocs(query(collection(db, 'menuItems'), where('listingId', '==', listingId)));
@@ -489,7 +543,7 @@ export default function AdminAddListing() {
               <input name="specialOccasionOffer" placeholder="Special Occasion Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="unlimitedAvailable" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
               <input name="unlimitedPrice" type="number" placeholder="Unlimited Price" className="input-field" defaultValue={initialListing?.unlimitedPrice || ''} />
-              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} simpleMode title="Add Mess Item" />
               <div className="space-y-2">
                 <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
                 {menuItems.length === 0 ? (
@@ -512,9 +566,9 @@ export default function AdminAddListing() {
             </div>
           )}
 
-          {(category === 'pg' || category === 'hostel') && (
+          {(category === 'pg' || category === 'hostel' || category === 'flat') && (
             <div className="space-y-3">
-              <h3 className="font-bold">PG / Hostel Fields</h3>
+              <h3 className="font-bold">PG / Flat / Hostel Fields</h3>
               <select name="gender" className="input-field" defaultValue={initialListing?.gender || 'both'}>
                 <option value="boys">Boys</option>
                 <option value="girls">Girls</option>
@@ -538,7 +592,7 @@ export default function AdminAddListing() {
               <h3 className="font-bold">Hotel Fields</h3>
               <input name="hotelSpecialOffer" placeholder="Special Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="hotelUnlimited" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
-              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} simpleMode title="Add Food Item" />
               <div className="space-y-2">
                 <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
                 {menuItems.length === 0 ? (
@@ -565,7 +619,7 @@ export default function AdminAddListing() {
             <div className="space-y-3">
               <h3 className="font-bold">Shop Items</h3>
               <p className="text-xs text-zinc-500">Add item name and price (stationery, medical, grocery, etc.)</p>
-              <MenuItemInput onAdd={addMenuItem} disabled={saving} />
+              <MenuItemInput onAdd={addMenuItem} disabled={saving} simpleMode title="Add Shop Item" />
               <div className="space-y-2">
                 <p className="text-xs text-zinc-400">Added items: {menuItems.length}</p>
                 {menuItems.length === 0 ? (
@@ -688,29 +742,31 @@ export default function AdminAddListing() {
             {!isEditMode && <p className="text-xs text-zinc-500">New listings are saved as active by default.</p>}
           </div>
 
-          <div className="space-y-3">
-            <h3 className="font-bold">Photos</h3>
-            {isEditMode && Array.isArray(initialListing?.photos) && initialListing.photos.length > 0 && (
-              <p className="text-[11px] text-zinc-500">Existing photos are kept unless you upload new ones.</p>
-            )}
-            <div className="grid grid-cols-3 gap-2">
-              {photos.map((photo, i) => (
-                <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
-                  <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-full object-cover" />
-                  <button type="button" onClick={() => removePhoto(i)} className="absolute top-1 right-1 bg-black/50 p-1 rounded-full text-white">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-              {photos.length < 8 && (
-                <label className="aspect-square rounded-lg border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center text-zinc-500 cursor-pointer hover:border-primary transition-colors">
-                  <Upload size={20} />
-                  <span className="text-[10px] mt-1">Upload</span>
-                  <input type="file" className="hidden" accept="image/*" multiple onChange={onPhotoChange} />
-                </label>
+          {allowsImages && (
+            <div className="space-y-3">
+              <h3 className="font-bold">{allowsSingleImage ? 'Image' : 'Images'}</h3>
+              {isEditMode && getListingImages(initialListing).length > 0 && (
+                <p className="text-[11px] text-zinc-500">Existing images are kept unless you upload new ones.</p>
               )}
+              <div className="grid grid-cols-3 gap-2">
+                {photos.map((photo, i) => (
+                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
+                    <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-full object-cover" />
+                    <button type="button" onClick={() => removePhoto(i)} className="absolute top-1 right-1 bg-black/50 p-1 rounded-full text-white">
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {photos.length < photoLimit && (
+                  <label className="aspect-square rounded-lg border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center text-zinc-500 cursor-pointer hover:border-primary transition-colors">
+                    <Upload size={20} />
+                    <span className="text-[10px] mt-1">{allowsSingleImage ? 'Upload 1' : 'Upload 4-5'}</span>
+                    <input type="file" className="hidden" accept="image/*" multiple={allowsMultipleImages} onChange={onPhotoChange} />
+                  </label>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           <button type="submit" disabled={saving} className="btn-primary w-full">
             {saving ? (isEditMode ? 'Updating...' : 'Saving...') : (isEditMode ? 'Update Listing' : 'Add Listing')}

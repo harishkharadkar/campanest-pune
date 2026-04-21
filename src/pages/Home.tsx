@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
-import { collection, getDocs, limit, query, where } from 'firebase/firestore';
+import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
 import { Link, useNavigate } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { AREAS, CATEGORY_DESCRIPTIONS, CATEGORY_LABELS } from '../constants';
 import { Search, MapPin, User, Store } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
+import { optimizeCloudinaryUrl } from '../lib/cloudinary';
 
 const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'] as const;
 const MENU_ITEMS_FETCH_LIMIT = 400;
@@ -81,6 +82,42 @@ const getMapUrl = (listing: Listing) => {
   return '';
 };
 
+const getListingImages = (listing: Listing) => {
+  const arrayImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
+  const photoImages = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
+  const singleImage = String((listing as any).image || (listing as any).bannerImage || '').trim();
+  const merged = [...arrayImages, ...photoImages, ...(singleImage ? [singleImage] : [])];
+  return merged.map((url) => optimizeCloudinaryUrl(url)).filter(Boolean);
+};
+
+const getStructuredItems = (listing: Listing) => {
+  const fromItems = Array.isArray((listing as any).items) ? (listing as any).items : [];
+  if (fromItems.length > 0) {
+    return fromItems
+      .map((item: any) => ({
+        name: String(item?.name || '').trim(),
+        price: Number(item?.price || 0),
+        description: String(item?.description || '').trim()
+      }))
+      .filter((item: { name: string; price: number }) => item.name && Number.isFinite(item.price));
+  }
+
+  const fromMenuItems = Array.isArray((listing as any).menuItems) ? (listing as any).menuItems : [];
+  if (fromMenuItems.length > 0) {
+    return fromMenuItems
+      .map((item: any) => ({
+        name: String(item?.itemName || '').trim(),
+        price: Number(item?.price || 0),
+        description: Array.isArray(item?.servingDetails)
+          ? item.servingDetails.join(', ')
+          : String(item?.servingDetails || '').trim()
+      }))
+      .filter((item: { name: string; price: number }) => item.name && Number.isFinite(item.price));
+  }
+
+  return [];
+};
+
 export default function Home() {
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -94,15 +131,15 @@ export default function Home() {
   const [area, setArea] = useState('All Areas');
 
   useEffect(() => {
-    const load = async () => {
-      setLoadingListings(true);
-      try {
-        let q = query(collection(db, 'listings'), where('active', '==', true));
+    setLoadingListings(true);
 
-        if (category !== 'all') q = query(q, where('category', '==', category));
-        if (area !== 'All Areas') q = query(q, where('area', '==', area));
+    let q = query(collection(db, 'listings'), where('active', '==', true));
+    if (category !== 'all') q = query(q, where('category', '==', category));
+    if (area !== 'All Areas') q = query(q, where('area', '==', area));
 
-        const snap = await getDocs(q);
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Listing));
 
         const now = Date.now();
@@ -126,31 +163,34 @@ export default function Home() {
         });
 
         setAllListings(activeRows);
-      } catch (error: any) {
+        setLoadingListings(false);
+      },
+      (error: any) => {
         showToast(error?.message || 'Failed to fetch listings', 'error');
-      } finally {
         setLoadingListings(false);
       }
-    };
+    );
 
-    void load();
+    return () => unsub();
   }, [category, area, showToast]);
 
   useEffect(() => {
-    const loadMenuItems = async () => {
-      setLoadingMenuItems(true);
-      try {
-        const snap = await getDocs(query(collection(db, 'menuItems'), limit(MENU_ITEMS_FETCH_LIMIT)));
+    setLoadingMenuItems(true);
+    const q = query(collection(db, 'menuItems'), limit(MENU_ITEMS_FETCH_LIMIT));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MenuItem));
         setAllMenuItems(rows);
-      } catch {
+        setLoadingMenuItems(false);
+      },
+      () => {
         setAllMenuItems([]);
-      } finally {
         setLoadingMenuItems(false);
       }
-    };
+    );
 
-    void loadMenuItems();
+    return () => unsub();
   }, []);
 
   const searchTerm = search.trim().toLowerCase();
@@ -207,18 +247,28 @@ export default function Home() {
     : (CATEGORY_DESCRIPTIONS[category] || '');
 
   const renderListingCard = (listing: Listing) => {
+    console.log('[Home] listing render', listing);
     const avgRating = Number(listing.averageRating ?? listing.avgRating ?? 0);
     const totalRatings = Number(listing.totalRatings || 0);
     const totalViews = Number(listing.views ?? listing.totalViews ?? 0);
-    const availableRooms = Number((listing as any).availableRooms || 0);
+    const availableRooms = Number((listing as any).roomsAvailable ?? (listing as any).availableRooms ?? 0);
     const showRooms = listing.category === 'pg' || listing.category === 'flat';
     const contactNumber = getContactNumber(listing);
     const whatsappNumber = getWhatsAppNumber(listing);
     const mapUrl = getMapUrl(listing);
     const hasContact = Boolean(normalizePhone(contactNumber));
+    const listingImages = getListingImages(listing);
+    const listingItems = getStructuredItems(listing).slice(0, 4);
+    const showItemsPreview = listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop';
+    const allowImageOnCard = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'].includes(String(listing.category));
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card p-5 border-zinc-800 hover:border-primary/50 shadow-sm transition-colors">
+        {allowImageOnCard && listingImages[0] && (
+          <div className="mb-3 rounded-xl overflow-hidden border border-zinc-800 aspect-[16/10] bg-zinc-900">
+            <img src={listingImages[0]} alt={listing.name} className="w-full h-full object-cover" loading="lazy" />
+          </div>
+        )}
         <h3 className="font-bold text-xl">{listing.name}</h3>
         <p className="text-zinc-500 text-xs flex items-center gap-1 mt-2">
           <MapPin size={12} />
@@ -230,6 +280,24 @@ export default function Home() {
           <span>{`\u{1F441} ${totalViews || 0}`}</span>
           {showRooms && <span>{`\u{1F3E0} ${availableRooms || 0} rooms left`}</span>}
         </div>
+        {showItemsPreview && (
+          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-xs text-zinc-400 mb-2">{listing.category === 'shop' ? 'Items' : 'Food Items'}</p>
+            {listingItems.length === 0 ? (
+              <p className="text-xs text-zinc-500">No items shared yet.</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                {listingItems.map((item, index) => (
+                  <div key={`${item.name}-${item.price}-${index}`} className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1.5">
+                    <p className="text-sm text-zinc-100">{item.name}</p>
+                    <p className="text-xs text-zinc-300">₹{item.price}</p>
+                    {item.description && <p className="text-[11px] text-zinc-500 mt-0.5">{item.description}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="mt-4 pt-4 border-t border-zinc-800">
           <div className="flex items-center gap-2">
             <button

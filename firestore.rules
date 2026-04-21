@@ -1,33 +1,86 @@
-﻿rules_version = '2';
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == "campanest7@gmail.com";
+    }
+
+    function isAnalyticsOnlyUpdate() {
+      let changed = request.resource.data.diff(resource.data).changedKeys();
+      let removed = request.resource.data.diff(resource.data).removedKeys();
+
+      return isSignedIn()
+        && removed.size() == 0
+        && changed.size() > 0
+        && changed.hasOnly([
+          "views",
+          "totalViews",
+          "avgRating",
+          "averageRating",
+          "totalRatings",
+          "lastUpdated"
+        ])
+        && (
+          changed.hasAny(["views", "totalViews"])
+          || changed.hasAny(["avgRating", "averageRating", "totalRatings"])
+        )
+        && (
+          !changed.hasAny(["views", "totalViews"])
+          || (
+            changed.hasAll(["views", "totalViews"])
+            && request.resource.data.views is number
+            && request.resource.data.totalViews is number
+            && request.resource.data.views >= 0
+            && request.resource.data.totalViews >= 0
+            && request.resource.data.totalViews == request.resource.data.views
+          )
+        )
+        && (
+          !changed.hasAny(["avgRating", "averageRating", "totalRatings"])
+          || (
+            changed.hasAll(["avgRating", "averageRating", "totalRatings"])
+            && request.resource.data.totalRatings is number
+            && request.resource.data.totalRatings >= 0
+            && request.resource.data.avgRating is number
+            && request.resource.data.averageRating is number
+            && request.resource.data.avgRating >= 0
+            && request.resource.data.avgRating <= 5
+            && request.resource.data.averageRating == request.resource.data.avgRating
+          )
+        );
+    }
 
     match /listings/{listingId} {
       allow read: if true;
 
-      // Only admin can modify listings
-      allow create, update, delete: if request.auth != null
-        && request.auth.token.email == "campanest7@gmail.com";
+      // Admin keeps full listing control.
+      allow create, delete: if isAdmin();
+
+      // Students can update analytics fields only.
+      allow update: if isAdmin() || isAnalyticsOnlyUpdate();
     }
 
     match /ratings/{ratingId} {
       allow read: if true;
 
-      // Students can add rating
-      allow create: if request.auth != null;
+      // Students can add rating.
+      allow create: if isSignedIn();
 
-      // Admin can delete fake ratings
-      allow delete: if request.auth != null
-        && request.auth.token.email == "campanest7@gmail.com";
+      // Admin can delete fake ratings.
+      allow delete: if isAdmin();
 
-      // No updates allowed
+      // No updates allowed.
       allow update: if false;
     }
 
     match /menuItems/{menuItemId} {
       allow read: if true;
-      allow create, update, delete: if request.auth != null
-        && request.auth.token.email == "campanest7@gmail.com";
+      allow create, update, delete: if isAdmin();
     }
 
     match /users/{userId} {

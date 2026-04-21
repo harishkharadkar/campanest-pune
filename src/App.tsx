@@ -7,6 +7,7 @@ import Disclaimer from './components/Disclaimer';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
 import CampaNestLogo from './components/CampaNestLogo';
 import PanicButton from './components/PanicButton';
+import CustomPopup from './components/CustomPopup';
 
 const SplashScreen = lazy(() => import('./pages/SplashScreen'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -43,6 +44,7 @@ const AppContent = () => {
       <div className="mobile-container">
         <Disclaimer />
         <PWAInstallPrompt />
+        <CustomPopup message="Welcome to CampaNest" />
         <Suspense fallback={<div className="h-screen flex items-center justify-center bg-background"><CampaNestLogo size={60} /></div>}>
           <Routes>
             <Route path="/" element={<SplashScreen />} />

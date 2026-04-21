@@ -92,6 +92,8 @@ export interface Listing {
   };
   phone: string;
   whatsapp?: string;
+  images?: string[];
+  image?: string;
   photos?: string[];
   active: boolean;
   createdAt: any;
@@ -113,6 +115,11 @@ export interface Listing {
   unlimitedAvailable?: boolean;
   unlimitedPrice?: number;
   menuItems?: MenuItem[];
+  items?: Array<{
+    name: string;
+    price: number;
+    description?: string;
+  }>;
   monthlyRate?: number;
   weeklyRate?: number;
   perPlateRate?: number;

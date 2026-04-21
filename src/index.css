@@ -38,3 +38,18 @@
 .input-field {
   @apply w-full bg-zinc-900 border border-zinc-800 rounded-lg py-3 px-4 text-white focus:outline-none focus:border-primary transition-colors;
 }
+
+.warning-popup-fade {
+  animation: warning-popup-fade-in 200ms ease-out;
+}
+
+@keyframes warning-popup-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

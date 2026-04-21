@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Smartphone, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePWA } from '../context/PWAContext';
 import CampaNestLogo from './CampaNestLogo';
+
+const SESSION_KEY = 'campanest_install_prompt_closed_session';
 
 const PWAInstallPrompt: React.FC = () => {
   const [show, setShow] = useState(false);
@@ -14,49 +16,34 @@ const PWAInstallPrompt: React.FC = () => {
   const isAndroid = /Android/.test(navigator.userAgent);
 
   useEffect(() => {
-    // Don't show if already installed
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
     const isInstalled = localStorage.getItem('campanest_installed') === 'true';
-    
-    if (isStandalone || isInstalled) {
-      console.log("PWA: App already installed, hiding prompt");
-      return;
-    }
+    const closedInSession = sessionStorage.getItem(SESSION_KEY) === 'true';
 
-    // Show prompt if installable OR if it's a mobile device (for manual guide)
+    if (isStandalone || isInstalled || closedInSession) return;
+
     if (user && (isInstallable || isIOS || isAndroid)) {
-      const dismissed = localStorage.getItem('campanest_install_dismissed') === 'true';
-      const shouldShow = !dismissed;
-
-      if (shouldShow) {
-        console.log("PWA: Showing install prompt (Manual or Auto)");
-        // Delay showing to not overwhelm the user
-        const timer = setTimeout(() => setShow(true), 3000);
-        return () => clearTimeout(timer);
-      }
+      const timer = setTimeout(() => setShow(true), 3000);
+      return () => clearTimeout(timer);
     }
   }, [user, isInstallable, isIOS, isAndroid]);
 
   const handleDismiss = () => {
-    console.log("PWA: User dismissed prompt (Not Now)");
     setShow(false);
-    localStorage.setItem('campanest_install_dismissed', 'true');
+    sessionStorage.setItem(SESSION_KEY, 'true');
   };
 
   const handleInstall = async () => {
     if (isInstallable) {
-      console.log("PWA: Triggering auto install");
       setShow(false);
       await installApp();
-    } else {
-      console.log("PWA: Manual install guide shown");
     }
   };
 
   return (
     <AnimatePresence>
       {show && (
-        <motion.div 
+        <motion.div
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 100, opacity: 0 }}
@@ -73,29 +60,30 @@ const PWAInstallPrompt: React.FC = () => {
                     <h4 className="text-white font-bold text-base">Install CampaNest</h4>
                     <p className="text-zinc-400 text-xs mt-0.5">Your campus. Your neighbourhood.</p>
                   </div>
-                  <button 
+                  <button
                     onClick={handleDismiss}
                     className="p-1 -mr-1 text-zinc-500 hover:text-white transition-colors"
+                    aria-label="Close"
                   >
                     <X size={18} />
                   </button>
                 </div>
-                
+
                 {isInstallable ? (
                   <>
                     <p className="text-white/90 text-sm mt-3 leading-snug">
-                      📲 Add to home screen for faster access and offline features.
+                      Add to home screen for faster access and offline support.
                     </p>
                     <div className="flex gap-3 mt-4">
-                      <button 
-                        onClick={handleInstall}
-                        className="flex-1 bg-primary text-white text-xs font-bold py-2.5 rounded-lg active:scale-95 transition-all shadow-lg shadow-primary/20"
+                      <button
+                        onClick={() => void handleInstall()}
+                        className="flex-1 bg-primary text-white text-xs font-bold py-2.5 rounded-lg"
                       >
                         Install App
                       </button>
-                      <button 
+                      <button
                         onClick={handleDismiss}
-                        className="flex-1 bg-zinc-800 text-zinc-300 text-xs font-bold py-2.5 rounded-lg active:scale-95 transition-all border border-zinc-700"
+                        className="flex-1 bg-zinc-800 text-zinc-300 text-xs font-bold py-2.5 rounded-lg border border-zinc-700"
                       >
                         Later
                       </button>
@@ -103,21 +91,21 @@ const PWAInstallPrompt: React.FC = () => {
                   </>
                 ) : (
                   <div className="mt-3 p-3 bg-zinc-900 rounded-xl border border-zinc-800">
-                    <p className="text-white text-xs font-bold mb-2">How to Install:</p>
+                    <p className="text-white text-xs font-bold mb-2">How to Install</p>
                     {isIOS ? (
                       <p className="text-zinc-400 text-[11px] leading-relaxed">
-                        Tap the <span className="text-primary font-bold">Share</span> button in Safari, then scroll down and select <span className="text-primary font-bold">"Add to Home Screen"</span>.
+                        Tap Share in Safari, then choose "Add to Home Screen".
                       </p>
                     ) : isAndroid ? (
                       <p className="text-zinc-400 text-[11px] leading-relaxed">
-                        Tap the <span className="text-primary font-bold">Menu (⋮)</span> button in Chrome, then select <span className="text-primary font-bold">"Add to Home Screen"</span>.
+                        Tap menu in Chrome, then choose "Add to Home Screen".
                       </p>
                     ) : (
                       <p className="text-zinc-400 text-[11px] leading-relaxed">
-                        Open this site in Chrome or Safari on your mobile device to install.
+                        Open this site on mobile Chrome or Safari to install.
                       </p>
                     )}
-                    <button 
+                    <button
                       onClick={handleDismiss}
                       className="w-full mt-3 bg-zinc-800 text-zinc-300 text-[10px] font-bold py-2 rounded-lg"
                     >

@@ -12,6 +12,8 @@ export interface DraftMenuItem {
 interface MenuItemInputProps {
   onAdd: (item: DraftMenuItem) => void;
   disabled?: boolean;
+  simpleMode?: boolean;
+  title?: string;
 }
 
 const DEFAULT_ITEM: DraftMenuItem = {
@@ -22,7 +24,7 @@ const DEFAULT_ITEM: DraftMenuItem = {
   servingDetails: ''
 };
 
-export default function MenuItemInput({ onAdd, disabled = false }: MenuItemInputProps) {
+export default function MenuItemInput({ onAdd, disabled = false, simpleMode = false, title = 'Add Item' }: MenuItemInputProps) {
   const [draft, setDraft] = useState<DraftMenuItem>(DEFAULT_ITEM);
   const [touched, setTouched] = useState(false);
 
@@ -50,7 +52,7 @@ export default function MenuItemInput({ onAdd, disabled = false }: MenuItemInput
 
   return (
     <div className="space-y-3 border border-zinc-800 rounded-lg p-3 bg-zinc-950/60">
-      <p className="text-sm font-semibold">Add Menu Item</p>
+      <p className="text-sm font-semibold">{title}</p>
       <input
         className="input-field"
         placeholder="Item name"
@@ -67,31 +69,33 @@ export default function MenuItemInput({ onAdd, disabled = false }: MenuItemInput
         onChange={(e) => updateField('price', Number(e.target.value))}
         disabled={disabled}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          className="input-field"
-          value={draft.type}
-          onChange={(e) => updateField('type', e.target.value as MenuItemType)}
-          disabled={disabled}
-        >
-          <option value="Veg">Veg</option>
-          <option value="Non-Veg">Non-Veg</option>
-        </select>
-        <select
-          className="input-field"
-          value={draft.category}
-          onChange={(e) => updateField('category', e.target.value as MenuItemCategory)}
-          disabled={disabled}
-        >
-          <option value="Thali">Thali</option>
-          <option value="Combo">Combo</option>
-          <option value="Main">Main</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
+      {!simpleMode && (
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            className="input-field"
+            value={draft.type}
+            onChange={(e) => updateField('type', e.target.value as MenuItemType)}
+            disabled={disabled}
+          >
+            <option value="Veg">Veg</option>
+            <option value="Non-Veg">Non-Veg</option>
+          </select>
+          <select
+            className="input-field"
+            value={draft.category}
+            onChange={(e) => updateField('category', e.target.value as MenuItemCategory)}
+            disabled={disabled}
+          >
+            <option value="Thali">Thali</option>
+            <option value="Combo">Combo</option>
+            <option value="Main">Main</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+      )}
       <textarea
         className="input-field h-20"
-        placeholder="Serving details (optional, one line per point)"
+        placeholder={simpleMode ? 'Description (optional)' : 'Serving details (optional, one line per point)'}
         value={draft.servingDetails}
         onChange={(e) => updateField('servingDetails', e.target.value)}
         disabled={disabled}

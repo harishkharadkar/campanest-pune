@@ -5,9 +5,16 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
     function isAdmin() {
-      return isSignedIn()
-        && request.auth.token.email == "campanest7@gmail.com";
+      return isSignedIn() && userRole() == "admin";
+    }
+
+    function isStudent() {
+      return isSignedIn() && userRole() == "student";
     }
 
     function isViewIncrementOnly() {
@@ -27,11 +34,11 @@ service cloud.firestore {
         && request.resource.data.views == oldViews + 1;
     }
 
-    function isRatingAggregateOnlyUpdate() {
+    function isStudentRatingAggregateOnlyUpdate() {
       let changed = request.resource.data.diff(resource.data).changedKeys();
       let removed = request.resource.data.diff(resource.data).removedKeys();
 
-      return isSignedIn()
+      return isStudent()
         && removed.size() == 0
         && changed.hasAll(["avgRating", "averageRating", "totalRatings"])
         && changed.hasOnly(["avgRating", "averageRating", "totalRatings", "lastUpdated"])
@@ -43,51 +50,56 @@ service cloud.firestore {
         && request.resource.data.averageRating == request.resource.data.avgRating;
     }
 
-    function isValidRatingWrite(listingId, uid) {
+    function isValidRatingWrite(uid) {
       return request.resource.data.uid == uid
         && request.resource.data.rating is number
         && request.resource.data.rating >= 1
-        && request.resource.data.rating <= 5
-        && request.resource.data.createdAt != null
-        && request.resource.data.updatedAt != null;
+        && request.resource.data.rating <= 5;
     }
 
+    // Users collection
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Listings collection
     match /listings/{listingId} {
+      // Anyone can read listings
       allow read: if true;
 
-      // Admin keeps full listing control.
+      // Only admin can create/edit/delete listings.
+      // Guest view counters and student rating aggregate updates are allowed as scoped exceptions.
       allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isViewIncrementOnly() || isStudentRatingAggregateOnlyUpdate();
 
-      // Guest/users can only increment views by exactly +1.
-      // Signed-in users can also update rating aggregates after rating writes.
-      allow update: if isAdmin() || isViewIncrementOnly() || isRatingAggregateOnlyUpdate();
-
+      // Ratings subcollection
       match /ratings/{uid} {
-        allow read: if true;
+        // Any logged-in user can read ratings; admin can also read.
+        allow read: if request.auth != null;
 
-        // One rating document per user per listing.
-        allow create, update: if isSignedIn()
+        // Student can only write their OWN rating document.
+        allow create, update: if request.auth != null
           && request.auth.uid == uid
-          && isValidRatingWrite(listingId, uid);
+          && isStudent()
+          && isValidRatingWrite(uid);
 
-        allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+        // Admin can read and write any rating.
+        allow read, write: if isAdmin();
       }
     }
 
-    // Legacy top-level ratings collection is read-only for backward compatibility.
-    match /ratings/{ratingId} {
-      allow read: if true;
-      allow create, update, delete: if isAdmin();
+    // Providers collection
+    match /providers/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        (request.auth.uid == uid || isAdmin());
     }
 
+    // Admin-managed menu items.
     match /menuItems/{menuItemId} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
-    }
-
-    match /users/{userId} {
-      allow read, write: if request.auth != null
-        && request.auth.uid == userId;
     }
 
     match /{document=**} {

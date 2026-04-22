@@ -23,6 +23,34 @@ const toSafeRatingAverage = (value: unknown) => {
   return Number(clamped.toFixed(1));
 };
 
+const readLegacyPhotos = (data: Record<string, any>) => {
+  const fromPhotos = Array.isArray(data.photos) ? data.photos : [];
+  const fromImages = Array.isArray(data.images) ? data.images : [];
+  const fromImageUrls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+  const fromPhotoUrls = Array.isArray(data.photoUrls) ? data.photoUrls : [];
+  const fromImgs = Array.isArray(data.imgs) ? data.imgs : [];
+  const fromPictures = Array.isArray(data.pictures) ? data.pictures : [];
+  const fromImageList = Array.isArray(data.imageList) ? data.imageList : [];
+  const singlePhoto = String(data.photo || '').trim();
+  const singleImage = String(data.image || '').trim();
+  const bannerImage = String(data.bannerImage || '').trim();
+
+  return [
+    ...fromPhotos,
+    ...fromImages,
+    ...fromImageUrls,
+    ...fromPhotoUrls,
+    ...fromImgs,
+    ...fromPictures,
+    ...fromImageList,
+    ...(singlePhoto ? [singlePhoto] : []),
+    ...(singleImage ? [singleImage] : []),
+    ...(bannerImage ? [bannerImage] : []),
+  ]
+    .map((url) => String(url || '').trim())
+    .filter(Boolean);
+};
+
 export default function AdminPanel() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -223,6 +251,42 @@ export default function AdminPanel() {
     }
   };
 
+  const migrateImageFields = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'listings'));
+      let updates = 0;
+
+      for (let index = 0; index < snapshot.docs.length; index += 400) {
+        const chunk = snapshot.docs.slice(index, index + 400);
+        const batch = writeBatch(db);
+        let chunkUpdates = 0;
+
+        chunk.forEach((docSnap) => {
+          const data = docSnap.data() as Record<string, any>;
+          if (Array.isArray(data.photos) && data.photos.length > 0) return;
+
+          const legacyPhotos = Array.from(new Set(readLegacyPhotos(data)));
+          if (legacyPhotos.length === 0) return;
+
+          batch.update(docSnap.ref, {
+            photos: legacyPhotos,
+            lastUpdated: serverTimestamp()
+          });
+          updates += 1;
+          chunkUpdates += 1;
+        });
+
+        if (chunkUpdates > 0) {
+          await batch.commit();
+        }
+      }
+
+      showToast(updates > 0 ? 'Image fields migrated successfully!' : 'No listings required image migration', 'success');
+    } catch (error: any) {
+      showToast(error?.message || 'Failed to migrate image fields', 'error');
+    }
+  };
+
   const categories = ['all', 'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'];
 
   return (
@@ -255,6 +319,11 @@ export default function AdminPanel() {
 
         <div className="space-y-4">
           <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="btn-outline text-xs px-3 py-2" onClick={() => void migrateImageFields()}>
+                Fix Image Fields (run once)
+              </button>
+            </div>
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -452,6 +521,7 @@ export default function AdminPanel() {
 
                 <section className="flex items-center justify-end gap-4 pt-1">
                   <button
+                    type="button"
                     className="btn-outline text-xs px-3 py-2 inline-flex items-center"
                     onClick={() => navigate(`/admin/add-listing?id=${encodeURIComponent(l.id)}`)}
                     title="Edit listing"
@@ -460,6 +530,7 @@ export default function AdminPanel() {
                     <Pencil size={14} />
                   </button>
                   <button
+                    type="button"
                     className="btn-outline text-red-400 border-red-500/30 text-xs px-3 py-2 inline-flex items-center hover:border-red-500/50"
                     onClick={() => void remove(l.id)}
                     title="Delete listing"

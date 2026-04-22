@@ -2,31 +2,22 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { addDays } from 'date-fns';
-import { Camera, ChevronLeft, GripVertical, RefreshCcw, Upload, X } from 'lucide-react';
+import { Camera, ChevronLeft } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
 import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
 import { Listing, ListingCategory, ListingPlanType, MenuItem } from '../types';
-import { getOptimizedUrl, optimizeCloudinaryUrl, uploadToCloudinary } from '../lib/cloudinary';
+import { getListingPhotos } from '../lib/listingPhotos';
 
 const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
 ];
 const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
-const MIN_PHOTOS = 4;
 const MAX_PHOTOS = 5;
-
-type UploadStatus = 'uploading' | 'uploaded' | 'error';
-type UploadItem = {
-  id: string;
-  file?: File;
-  previewUrl: string;
-  progress: number;
-  status: UploadStatus;
-  uploadedUrl?: string;
-  error?: string;
-};
+const IMAGE_INPUT_LABELS = ['Image 1 (Main)', 'Image 2', 'Image 3', 'Image 4', 'Image 5'];
+const EMPTY_PHOTO_INPUTS = ['', '', '', '', ''];
+type ImageInputStatus = 'idle' | 'loading' | 'success' | 'error';
 
 type LocalMenuItem = {
   itemName: string;
@@ -97,23 +88,87 @@ const toLocationInputValue = (listing?: Partial<Listing> | null) => {
   return `${lat}, ${lng}`;
 };
 
-const getListingImages = (listing?: Partial<Listing> | null) => {
-  if (!listing) return [] as string[];
-  const fromImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
-  const fromPhotos = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
-  return [...fromImages, ...fromPhotos].map((url) => String(url || '').trim()).filter(Boolean);
+const getListingImages = (listing?: Partial<Listing> | null) => getListingPhotos((listing || null) as Record<string, unknown>);
+
+const isHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
 };
 
-const createUploadItemId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const looksLikeImageUrl = (value: string) => {
+  if (!isHttpUrl(value)) return false;
+  if (value.includes('cloudinary.com')) return true;
+  return /\.(png|jpe?g|webp|gif|bmp|svg|avif)(\?|#|$)/i.test(value);
+};
 
-const toUploadItemsFromUrls = (urls: string[]): UploadItem[] => {
-  return urls.slice(0, MAX_PHOTOS).map((url) => ({
-    id: createUploadItemId(),
-    previewUrl: getOptimizedUrl(url, 'thumb') || url,
-    progress: 100,
-    status: 'uploaded',
-    uploadedUrl: url
-  }));
+const validateImageReachable = (url: string) => new Promise<boolean>((resolve) => {
+  const image = new Image();
+  const timeout = window.setTimeout(() => resolve(false), 8000);
+  image.onload = () => {
+    window.clearTimeout(timeout);
+    resolve(true);
+  };
+  image.onerror = () => {
+    window.clearTimeout(timeout);
+    resolve(false);
+  };
+  image.src = url;
+});
+
+type ImageUrlInputProps = {
+  label: string;
+  value: string;
+  status: ImageInputStatus;
+  required?: boolean;
+  isMain?: boolean;
+  onChange: (nextValue: string) => void;
+  onLoad: () => void;
+  onError: () => void;
+};
+
+const ImageUrlInput = ({ label, value, status, required, isMain, onChange, onLoad, onError }: ImageUrlInputProps) => {
+  const borderClass = status === 'success'
+    ? 'border-green-500'
+    : status === 'error'
+      ? 'border-red-500'
+      : 'border-border';
+
+  const showPreview = Boolean(value.trim()) && status !== 'error';
+
+  return (
+    <div className="space-y-2">
+      <label className={`text-sm ${isMain ? 'text-[#FF7A00] font-semibold' : 'text-text'}`}>
+        {label}
+        {required && <span className="text-red-400 ml-1">*</span>}
+        {isMain && <span className="ml-2 text-[11px] uppercase tracking-[0.08em] text-[#FF7A00]">Main Photo</span>}
+      </label>
+      <input
+        type="text"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Paste Cloudinary URL here... https://res.cloudinary.com/ddyljqef3/..."
+        className={`w-full rounded-lg bg-[#12121A] ${borderClass} border px-3 py-2 text-sm text-[#F0F0FF] placeholder:text-zinc-500 outline-none focus:border-primary`}
+      />
+
+      {showPreview && (
+        <img
+          src={value.trim()}
+          alt={`${label} preview`}
+          onLoad={onLoad}
+          onError={onError}
+          className="w-[120px] h-[80px] object-cover rounded-lg border border-border"
+        />
+      )}
+
+      {status === 'error' && (
+        <p className="text-xs text-red-400">Invalid image URL</p>
+      )}
+    </div>
+  );
 };
 
 export default function AdminAddListing() {
@@ -124,9 +179,8 @@ export default function AdminAddListing() {
   const editId = (searchParams.get('id') || '').trim();
   const isEditMode = Boolean(editId);
 
-  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
-  const [dragActive, setDragActive] = useState(false);
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [photoUrls, setPhotoUrls] = useState<string[]>([...EMPTY_PHOTO_INPUTS]);
+  const [imageInputStatus, setImageInputStatus] = useState<ImageInputStatus[]>(['idle', 'idle', 'idle', 'idle', 'idle']);
   const [saving, setSaving] = useState(false);
   const [loadingListing, setLoadingListing] = useState(false);
   const [category, setCategory] = useState<ListingCategory>('mess');
@@ -146,7 +200,8 @@ export default function AdminAddListing() {
         setCategory('mess');
         setAdDuration(7);
         setMenuItems([]);
-        setUploadItems([]);
+        setPhotoUrls([...EMPTY_PHOTO_INPUTS]);
+        setImageInputStatus(['idle', 'idle', 'idle', 'idle', 'idle']);
         setFormVersion((prev) => prev + 1);
         return;
       }
@@ -164,7 +219,13 @@ export default function AdminAddListing() {
 
         const data = snap.data() as Partial<Listing>;
         setInitialListing(data);
-        setUploadItems(toUploadItemsFromUrls(getListingImages(data)));
+        const existingPhotos = getListingImages(data).slice(0, MAX_PHOTOS);
+        const nextInputs = [...EMPTY_PHOTO_INPUTS];
+        existingPhotos.forEach((url, index) => {
+          nextInputs[index] = String(url || '').trim();
+        });
+        setPhotoUrls(nextInputs);
+        setImageInputStatus(nextInputs.map((url) => (url ? (looksLikeImageUrl(url) ? 'loading' : 'error') : 'idle')));
         const inlineMenuItems = normalizeMenuItems((data.menuItems as Partial<MenuItem>[]) || []);
         setMenuItems(inlineMenuItems);
 
@@ -199,135 +260,28 @@ export default function AdminAddListing() {
     };
   }, [editId, isEditMode, navigate, showToast]);
 
-  useEffect(() => {
-    return () => {
-      uploadItems.forEach((item) => {
-        if (item.file && item.previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(item.previewUrl);
-        }
-      });
-    };
-  }, [uploadItems]);
-
-  const uploadSingleFile = async (itemId: string, file: File) => {
-    try {
-      const uploadedUrl = await uploadToCloudinary(file, (progress) => {
-        setUploadItems((prev) => prev.map((item) => (
-          item.id === itemId ? { ...item, progress } : item
-        )));
-      });
-
-      setUploadItems((prev) => prev.map((item) => (
-        item.id === itemId
-          ? {
-              ...item,
-              status: 'uploaded',
-              progress: 100,
-              uploadedUrl,
-              previewUrl: getOptimizedUrl(uploadedUrl, 'thumb') || uploadedUrl,
-              error: undefined
-            }
-          : item
-      )));
-
-      return true;
-    } catch (error: any) {
-      setUploadItems((prev) => prev.map((item) => (
-        item.id === itemId
-          ? {
-              ...item,
-              status: 'error',
-              progress: 0,
-              error: String(error?.message || 'Upload failed')
-            }
-          : item
-      )));
-      return false;
-    }
-  };
-
-  const handleIncomingFiles = async (incomingFiles: File[]) => {
-    const validFiles = incomingFiles.filter((file) => file.type.startsWith('image/'));
-    if (validFiles.length === 0) return;
-
-    if (uploadItems.length + validFiles.length > MAX_PHOTOS) {
-      showToast('Maximum 5 images allowed per listing', 'error');
-      return;
-    }
-
-    const queuedItems: UploadItem[] = validFiles.map((file) => ({
-      id: createUploadItemId(),
-      file,
-      previewUrl: URL.createObjectURL(file),
-      progress: 0,
-      status: 'uploading'
-    }));
-
-    console.log('[AdminAddListing] file selected', validFiles.map((file) => ({
-      name: file.name,
-      size: file.size,
-      type: file.type
-    })));
-
-    setUploadItems((prev) => [...prev, ...queuedItems]);
-
-    const uploadResults = await Promise.all(queuedItems.map((item) => uploadSingleFile(item.id, item.file as File)));
-    if (uploadResults.every(Boolean)) {
-      showToast('Images uploaded successfully', 'success');
-    } else {
-      showToast('Some uploads failed. Use retry button.', 'error');
-    }
-  };
-
-  const onPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    await handleIncomingFiles(Array.from(e.target.files as FileList));
-    e.target.value = '';
-  };
-
-  const retryUpload = async (itemId: string) => {
-    const target = uploadItems.find((item) => item.id === itemId);
-    if (!target?.file) return;
-
-    setUploadItems((prev) => prev.map((item) => (
-      item.id === itemId ? { ...item, status: 'uploading', progress: 0, error: undefined } : item
-    )));
-
-    const ok = await uploadSingleFile(itemId, target.file);
-    if (ok) showToast('Images uploaded successfully', 'success');
-    else showToast('Upload failed. Use retry button.', 'error');
-  };
-
-  const removePhoto = (index: number) => {
-    setUploadItems((prev) => {
-      const target = prev[index];
-      if (target?.file && target.previewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(target.previewUrl);
-      }
-      return prev.filter((_, i) => i !== index);
-    });
-  };
-
-  const onDropFiles = async (event: React.DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    setDragActive(false);
-    const incoming = Array.from(event.dataTransfer.files || []);
-    await handleIncomingFiles(incoming);
-  };
-
-  const onDragStartPhoto = (index: number) => setDraggedIndex(index);
-  const onDropPhoto = (index: number) => {
-    if (draggedIndex === null || draggedIndex === index) return;
-    setUploadItems((prev) => {
+  const setPhotoInput = (index: number, nextValue: string) => {
+    const value = nextValue.trim();
+    setPhotoUrls((prev) => {
       const next = [...prev];
-      const [moved] = next.splice(draggedIndex, 1);
-      next.splice(index, 0, moved);
+      next[index] = nextValue;
       return next;
     });
-    setDraggedIndex(null);
+    setImageInputStatus((prev) => {
+      const next = [...prev];
+      if (!value) next[index] = 'idle';
+      else next[index] = looksLikeImageUrl(value) ? 'loading' : 'error';
+      return next;
+    });
   };
 
-  const allowsImages = true;
+  const setPhotoInputStatus = (index: number, status: ImageInputStatus) => {
+    setImageInputStatus((prev) => {
+      const next = [...prev];
+      next[index] = status;
+      return next;
+    });
+  };
 
   const addMenuItem = (item: DraftMenuItem) => {
     setMenuItems((prev) => [
@@ -361,25 +315,55 @@ export default function AdminAddListing() {
 
       const parsedLocation = parseLocationCoordinates(getText('locationCoordinates'));
       const closedTillRaw = getText('closedTill');
-      const hasUploading = uploadItems.some((item) => item.status === 'uploading');
-      if (hasUploading) {
-        showToast('Please wait for image uploads to complete', 'info');
+      const nextPhotoUrls = photoUrls.map((url) => String(url || '').trim()).slice(0, MAX_PHOTOS);
+      const isActiveListing = formData.get('active') === 'on';
+
+      if (!nextPhotoUrls[0]) {
+        setPhotoInputStatus(0, 'error');
+        showToast('Main image URL is required', 'error');
         setSaving(false);
         return;
       }
 
-      const uploadedUrls = uploadItems
-        .filter((item) => item.status === 'uploaded' && item.uploadedUrl)
-        .map((item) => String(item.uploadedUrl))
-        .slice(0, MAX_PHOTOS);
+      if (isActiveListing) {
+        const missingRequired = [1, 2, 3].some((index) => !nextPhotoUrls[index]);
+        if (missingRequired) {
+          [1, 2, 3].forEach((index) => {
+            if (!nextPhotoUrls[index]) setPhotoInputStatus(index, 'error');
+          });
+          showToast('Images 2-4 are required for active listings', 'error');
+          setSaving(false);
+          return;
+        }
+      }
 
-      if (allowsImages && uploadedUrls.length < MIN_PHOTOS) {
-        showToast('Please upload at least 4 images', 'info');
+      const enteredUrlIndexes = nextPhotoUrls
+        .map((url, index) => ({ url, index }))
+        .filter((entry) => Boolean(entry.url));
+
+      const invalidFormat = enteredUrlIndexes.find((entry) => !looksLikeImageUrl(entry.url));
+      if (invalidFormat) {
+        setPhotoInputStatus(invalidFormat.index, 'error');
+        showToast('Invalid image URL', 'error');
         setSaving(false);
         return;
       }
 
-      const finalImages = uploadedUrls;
+      const reachability = await Promise.all(enteredUrlIndexes.map(async (entry) => ({
+        index: entry.index,
+        reachable: await validateImageReachable(entry.url)
+      })));
+
+      const unreachable = reachability.find((entry) => !entry.reachable);
+      if (unreachable) {
+        setPhotoInputStatus(unreachable.index, 'error');
+        showToast('Invalid image URL', 'error');
+        setSaving(false);
+        return;
+      }
+
+      reachability.forEach((entry) => setPhotoInputStatus(entry.index, 'success'));
+      const finalPhotos = nextPhotoUrls.filter(Boolean);
       const plan = buildPlan(category, adDuration);
       const durationDefault = isEditMode ? Number(initialListing?.duration || plan.duration) : 30;
       const duration = getNum('duration', durationDefault);
@@ -388,14 +372,15 @@ export default function AdminAddListing() {
       const listing: Record<string, any> = {
         name: getText('name') || getText('title') || getText('itemName'),
         category,
+        serviceType: getText('serviceType') || category,
         area: getText('area'),
         nearCollege: getText('nearCollege'),
         address: getText('address'),
         phone: getText('phone'),
         whatsapp: getText('whatsapp'),
         description: getText('description'),
-        images: finalImages,
-        photos: finalImages,
+        price: getNum('price', Number((initialListing as any)?.price || 0)),
+        photos: finalPhotos,
         providerId: initialListing?.providerId || 'admin-managed',
 
         totalViews: getNum('totalViews', Number(initialListing?.totalViews || 0)),
@@ -406,31 +391,20 @@ export default function AdminAddListing() {
         priorityScore: getNum('priorityScore', Number(initialListing?.priorityScore || 50)),
         isFeatured: formData.get('isFeatured') === 'on',
         isSponsored: formData.get('isSponsored') === 'on',
-        active: initialListing?.active ?? true,
+        active: formData.get('active') === 'on',
 
         pricePlan: getNum('pricePlan', Number(initialListing?.pricePlan || plan.pricePlan)),
         duration,
         planType: (formData.get('planType') as ListingPlanType) || initialListing?.planType || plan.planType,
         validUntil: isEditMode ? (initialListing?.validUntil || validUntil) : validUntil,
-        lastUpdated: serverTimestamp()
+        lastUpdated: serverTimestamp(),
+        updatedAt: new Date().toISOString()
       };
 
       if (parsedLocation) {
         listing.location = parsedLocation;
       } else if (isEditMode) {
         listing.location = deleteField();
-      }
-
-      if (!allowsImages) {
-        if (isEditMode) {
-          listing.images = deleteField();
-          listing.photos = deleteField();
-          listing.image = deleteField();
-          if (category !== 'advertisement') listing.bannerImage = deleteField();
-        } else {
-          listing.images = [];
-          listing.photos = [];
-        }
       }
 
       if (category === 'mess') {
@@ -540,13 +514,10 @@ export default function AdminAddListing() {
         listing.itemName = getText('itemName');
         listing.price = getNum('itemPrice');
         listing.condition = getText('condition').toLowerCase() || 'used';
-        listing.image = String(finalImages[0] || '').trim();
       }
 
       if (category === 'advertisement') {
         listing.title = getText('title');
-        listing.bannerImage = String(finalImages[0] || '').trim();
-        listing.image = listing.bannerImage;
       }
 
       if (category === 'doctor') {
@@ -572,6 +543,19 @@ export default function AdminAddListing() {
       console.log('[AdminAddListing] firestore save payload', listing);
       if (isEditMode) {
         await updateDoc(doc(db, 'listings', editId), listing as any);
+        const refreshed = await getDoc(doc(db, 'listings', editId));
+        if (refreshed.exists()) {
+          const refreshedData = refreshed.data() as Partial<Listing>;
+          setInitialListing(refreshedData);
+          const refreshedPhotos = getListingImages(refreshedData).slice(0, MAX_PHOTOS);
+          const nextInputs = [...EMPTY_PHOTO_INPUTS];
+          refreshedPhotos.forEach((url, index) => {
+            nextInputs[index] = String(url || '').trim();
+          });
+          setPhotoUrls(nextInputs);
+          setImageInputStatus(nextInputs.map((url) => (url ? (looksLikeImageUrl(url) ? 'loading' : 'error') : 'idle')));
+          setFormVersion((prev) => prev + 1);
+        }
       } else {
         listing.createdAt = serverTimestamp();
         const listingRef = await addDoc(collection(db, 'listings'), listing);
@@ -612,7 +596,7 @@ export default function AdminAddListing() {
       showToast(isEditMode ? 'Listing updated successfully' : 'Listing added successfully', 'success');
       navigate('/admin');
     } catch (error: any) {
-      showToast(error?.message || 'Failed to save listing', 'error');
+      showToast(isEditMode ? 'Failed to update listing' : (error?.message || 'Failed to save listing'), 'error');
     } finally {
       setSaving(false);
     }
@@ -643,6 +627,12 @@ export default function AdminAddListing() {
             <select name="category" className="input-field" value={category} onChange={(e) => setCategory(e.target.value as ListingCategory)}>
               {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
             </select>
+            <input
+              name="serviceType"
+              placeholder="Service Type"
+              className="input-field"
+              defaultValue={String((initialListing as any)?.serviceType || initialListing?.category || category)}
+            />
             <select name="area" className="input-field" defaultValue={initialListing?.area || ''} required>
               <option value="">Select Area</option>
               {AREAS.map((area) => <option key={area} value={area}>{area}</option>)}
@@ -652,6 +642,7 @@ export default function AdminAddListing() {
             <input name="phone" placeholder="Contact Number" className="input-field" defaultValue={initialListing?.phone || ''} required />
             <input name="whatsapp" placeholder="WhatsApp Number" className="input-field" defaultValue={initialListing?.whatsapp || ''} required />
             <textarea name="description" placeholder="Description" className="input-field h-24" defaultValue={initialListing?.description || ''} required />
+            <input name="price" type="number" placeholder="Price" className="input-field" defaultValue={Number((initialListing as any)?.price || 0)} />
             <input
               name="locationCoordinates"
               placeholder="Location Coordinates (Latitude, Longitude)"
@@ -872,37 +863,49 @@ export default function AdminAddListing() {
             <input name="avgRating" type="number" step="0.1" placeholder="avgRating" className="input-field" defaultValue={initialListing?.avgRating ?? 0} />
             <input name="totalRatings" type="number" placeholder="totalRatings" className="input-field" defaultValue={initialListing?.totalRatings ?? 0} />
             <input name="priorityScore" type="number" placeholder="priorityScore" className="input-field" defaultValue={initialListing?.priorityScore ?? 50} />
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={Boolean(initialListing?.active ?? true)} /> Active</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isFeatured" defaultChecked={Boolean(initialListing?.isFeatured)} /> Featured</label>
             {!isEditMode && <p className="text-xs text-zinc-500">New listings are saved as active by default.</p>}
           </div>
 
-          {allowsImages && (
-            <div className="space-y-3">
-              <h3 className="font-bold">{allowsSingleImage ? 'Image' : 'Images'}</h3>
-              {isEditMode && getListingImages(initialListing).length > 0 && (
-                <p className="text-[11px] text-zinc-500">Existing images are kept unless you upload new ones.</p>
-              )}
-              <div className="grid grid-cols-3 gap-2">
-                {photos.map((photo, i) => (
-                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
-                    <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-full object-cover" />
-                    <button type="button" onClick={() => removePhoto(i)} className="absolute top-1 right-1 bg-black/50 p-1 rounded-full text-white">
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-                {photos.length < photoLimit && (
-                  <label className="aspect-square upload-dropzone flex flex-col items-center justify-center text-text-muted cursor-pointer">
-                    <Upload size={20} />
-                    <span className="text-[10px] mt-1">{allowsSingleImage ? 'Upload 1' : 'Upload 4-5'}</span>
-                    <input type="file" className="hidden" accept="image/*" multiple={allowsMultipleImages} onChange={onPhotoChange} />
-                  </label>
-                )}
-              </div>
+          <div className="space-y-4">
+            <h3 className="font-bold">Image URLs</h3>
+            <div className="rounded-xl border border-border bg-[#12121A] p-3 text-xs text-text-muted leading-relaxed">
+              <p className="font-semibold text-text mb-1">How to get your Cloudinary image URL:</p>
+              <p>1. Go to cloudinary.com → Media Library</p>
+              <p>2. Click on any uploaded image</p>
+              <p>3. Click &quot;Copy URL&quot; or right-click image → Copy image address</p>
+              <p>4. Paste the URL in the field below</p>
+              <p className="mt-1 text-zinc-400">Image 1 is mandatory. Images 2-4 are required when listing is Active.</p>
             </div>
-          )}
 
-          <button type="submit" disabled={saving} className="btn-primary w-full">
+            {IMAGE_INPUT_LABELS.map((label, index) => (
+              <ImageUrlInput
+                key={label}
+                label={label}
+                value={photoUrls[index] || ''}
+                status={imageInputStatus[index] || 'idle'}
+                required={index < 4}
+                isMain={index === 0}
+                onChange={(nextValue) => setPhotoInput(index, nextValue)}
+                onLoad={() => setPhotoInputStatus(index, 'success')}
+                onError={() => setPhotoInputStatus(index, 'error')}
+              />
+            ))}
+
+            {photoUrls.every((url) => !String(url || '').trim()) && (
+              <div className="rounded-xl border border-border bg-[#141422] p-8 text-center text-zinc-500 flex flex-col items-center gap-2">
+                <Camera size={24} />
+                <span className="text-xs">No image URLs added</span>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="btn-primary w-full"
+          >
             {saving ? (isEditMode ? 'Updating...' : 'Saving...') : (isEditMode ? 'Update Listing' : 'Add Listing')}
           </button>
         </form>

@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, increment, limit, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
-import { ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
+import { Camera, ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import RatingStars from '../components/RatingStars';
 import { CATEGORY_LABELS } from '../constants';
 import { useAuth } from '../context/AuthContext';
-import { optimizeCloudinaryUrl } from '../lib/cloudinary';
+import { getOptimizedUrl } from '../lib/cloudinary';
+import { getListingPhotos } from '../lib/listingPhotos';
 
 const normalizeWhatsAppNumber = (phone?: string, whatsapp?: string) => {
   const raw = (whatsapp || phone || '').replace(/\D/g, '');
@@ -56,16 +57,9 @@ const getListingMapUrl = (listing: Listing) => {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(listing.address || '')}`;
 };
 
-const IMAGE_ENABLED_CATEGORIES = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'] as const;
 const VIEWED_LISTINGS_KEY = 'campanest:viewedListings';
 
-const getListingImages = (listing: Listing) => {
-  const arrayImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
-  const photoImages = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
-  const singleImage = String((listing as any).image || (listing as any).bannerImage || '').trim();
-  const merged = [...arrayImages, ...photoImages, ...(singleImage ? [singleImage] : [])];
-  return merged.map((url) => optimizeCloudinaryUrl(url)).filter(Boolean);
-};
+const getListingImages = (listing: Listing) => getListingPhotos(listing as unknown as Record<string, unknown>);
 
 const getStructuredListingItems = (listing: Listing, menuItems: MenuItem[]) => {
   const fromItems = Array.isArray((listing as any).items) ? (listing as any).items : [];
@@ -293,8 +287,8 @@ export default function ListingDetail() {
   const displayedTotalRatings = Math.max(0, Number(listing.totalRatings ?? 0));
   const displayedViews = Number(listing.views ?? listing.totalViews ?? 0);
   const listingImages = getListingImages(listing);
-  const isImageAllowed = IMAGE_ENABLED_CATEGORIES.includes(listing.category as any);
-  const currentImage = listingImages[activeImageIndex] || optimizeCloudinaryUrl(String((listing as any).image || (listing as any).bannerImage || ''));
+  const hasImages = listingImages.length > 0;
+  const currentImage = hasImages ? getOptimizedUrl(listingImages[activeImageIndex], 'detail') : '';
   const warningKey = `warningDismissed:${listingId}`;
   const warningText = String(
     (listing as any).warning
@@ -322,14 +316,14 @@ export default function ListingDetail() {
 
   const handleRate = async (stars: number) => {
     if (!listingId || !listing) return;
-    if (!user?.uid) {
+    if (!auth.currentUser || !user?.uid) {
       showToast('Please login to rate', 'error');
       return;
     }
 
     const isStudent = profile?.role === 'student';
     if (!isStudent) {
-      showToast('Only students can rate listings', 'error');
+      showToast('Only students can rate', 'error');
       return;
     }
 
@@ -385,7 +379,8 @@ export default function ListingDetail() {
         return {
           average,
           total,
-          counts
+          counts,
+          wasExisting: oldRatingSnap.exists()
         };
       });
 
@@ -400,7 +395,7 @@ export default function ListingDetail() {
       });
       setRatingsBreakdown(nextMetrics.counts);
       setUserRating(nextStars);
-      showToast('Thanks for your rating!', 'success');
+      showToast(nextMetrics.wasExisting ? 'Rating updated successfully!' : 'Rating submitted successfully!', 'success');
     } catch (error: any) {
       showToast(error?.message || 'Failed to submit rating', 'error');
     } finally {
@@ -442,54 +437,87 @@ export default function ListingDetail() {
 
         <div className="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
           <div className="space-y-5">
-            {isImageAllowed && currentImage && (
-              <div className="card p-0 overflow-hidden">
-                <div
-                  className="relative aspect-[16/9] bg-[#141422]"
-                  onTouchStart={(event) => setTouchStartX(event.touches[0]?.clientX ?? null)}
-                  onTouchEnd={(event) => {
-                    if (touchStartX === null) return;
-                    const endX = event.changedTouches[0]?.clientX ?? touchStartX;
-                    const diff = endX - touchStartX;
-                    if (Math.abs(diff) > 40) {
-                      if (diff > 0) prevImage();
-                      else nextImage();
-                    }
-                    setTouchStartX(null);
-                  }}
-                >
-                  <img src={currentImage} alt={listing.name} className="listing-image" loading="eager" />
-                  {listingImages.length > 1 && (
-                    <>
-                      <button type="button" onClick={prevImage} className="hidden md:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">‹</button>
-                      <button type="button" onClick={nextImage} className="hidden md:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">›</button>
-                    </>
-                  )}
-                  <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
-                    {CATEGORY_LABELS[listing.category] || listing.category}
-                  </span>
-                  {isExpired && <span className="absolute top-3 right-3 tag-label px-3 py-1 rounded-full bg-red-500/80 text-white">Expired</span>}
-                </div>
-
+                        <div className="card p-0 overflow-hidden">
+              <div
+                className="relative aspect-[16/9] bg-[#141422]"
+                onTouchStart={(event) => setTouchStartX(event.touches[0]?.clientX ?? null)}
+                onTouchEnd={(event) => {
+                  if (touchStartX === null) return;
+                  const endX = event.changedTouches[0]?.clientX ?? touchStartX;
+                  const diff = endX - touchStartX;
+                  if (Math.abs(diff) > 40) {
+                    if (diff > 0) prevImage();
+                    else nextImage();
+                  }
+                  setTouchStartX(null);
+                }}
+              >
+                {hasImages && currentImage ? (
+                  <img
+                    src={currentImage}
+                    alt={listing.name}
+                    className="listing-image"
+                    loading="eager"
+                    onError={(event) => {
+                      const target = event.currentTarget;
+                      target.onerror = null;
+                      target.src = '/placeholder.jpg';
+                      console.error('Slider image failed:', currentImage);
+                    }}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-zinc-500">
+                    <Camera size={30} />
+                  </div>
+                )}
                 {listingImages.length > 1 && (
-                  <div className="p-3 border-t border-border">
-                    <div className="flex items-center gap-2 overflow-x-auto">
-                      {listingImages.map((image, index) => (
+                  <>
+                    <button type="button" onClick={prevImage} className="hidden md:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">&#8249;</button>
+                    <button type="button" onClick={nextImage} className="hidden md:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">&#8250;</button>
+                  </>
+                )}
+                <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
+                  {CATEGORY_LABELS[listing.category] || listing.category}
+                </span>
+                {isExpired && <span className="absolute top-3 right-3 tag-label px-3 py-1 rounded-full bg-red-500/80 text-white">Expired</span>}
+                {listingImages.length > 0 && (
+                  <span className="absolute top-3 right-3 rounded-full bg-black/50 px-3 py-1 text-xs text-white">
+                    {activeImageIndex + 1} / {listingImages.length}
+                  </span>
+                )}
+              </div>
+
+              {listingImages.length > 1 && (
+                <div className="p-3 border-t border-border">
+                  <div className="flex items-center gap-2 overflow-x-auto">
+                    {listingImages.map((image, index) => {
+                      const thumbUrl = getOptimizedUrl(image, 'thumb');
+                      return (
                         <button
                           key={`${image}-${index}`}
                           type="button"
                           onClick={() => setActiveImageIndex(index)}
                           className={`relative w-20 h-14 rounded-lg overflow-hidden border ${index === activeImageIndex ? 'border-primary' : 'border-border'}`}
                         >
-                          <img src={image} alt={`Thumbnail ${index + 1}`} className="listing-image" loading="lazy" />
+                          <img
+                            src={thumbUrl}
+                            alt={`Thumbnail ${index + 1}`}
+                            className="listing-image"
+                            loading="lazy"
+                            onError={(event) => {
+                              const target = event.currentTarget;
+                              target.onerror = null;
+                              target.src = '/placeholder.jpg';
+                              console.error('Slider thumbnail failed:', thumbUrl);
+                            }}
+                          />
                         </button>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            )}
-
+                </div>
+              )}
+            </div>
             <div className="card">
               <h1 className="text-3xl">{listing.name}</h1>
               <p className="mt-2 text-text-muted flex items-center gap-1 text-sm"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege || 'Campus Area'}</p>
@@ -626,10 +654,23 @@ export default function ListingDetail() {
                 <h3 className="text-xl">Similar Listings</h3>
                 <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {similarListings.map((item) => {
-                    const image = getListingImages(item)[0];
+                    const image = getOptimizedUrl(getListingImages(item)[0], 'thumb');
                     return (
                       <Link key={item.id} to={`/listing/${item.id}`} className="rounded-xl border border-border bg-surface-elevated p-3 hover:border-primary transition-colors">
-                        {image && <img src={image} alt={item.name} className="w-full h-28 rounded-lg object-cover mb-3" loading="lazy" />}
+                        {image && (
+                          <img
+                            src={image}
+                            alt={item.name}
+                            className="w-full h-28 rounded-lg object-cover mb-3"
+                            loading="lazy"
+                            onError={(event) => {
+                              const target = event.currentTarget;
+                              target.onerror = null;
+                              target.src = '/placeholder.jpg';
+                              console.error('Similar listing image failed:', image);
+                            }}
+                          />
+                        )}
                         <p className="font-medium text-sm">{item.name}</p>
                         <p className="text-xs text-text-muted mt-1">{item.area}</p>
                       </Link>
@@ -699,3 +740,4 @@ export default function ListingDetail() {
     </div>
   );
 }
+

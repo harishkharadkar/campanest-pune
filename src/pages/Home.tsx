@@ -4,9 +4,10 @@ import { db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
 import { Link, useNavigate } from 'react-router-dom';
 import { AREAS, CATEGORY_DESCRIPTIONS, CATEGORY_LABELS } from '../constants';
-import { Search, MapPin, Store, Eye, MessageCircle } from 'lucide-react';
+import { Search, MapPin, Store, Eye, MessageCircle, Camera } from 'lucide-react';
 import { useToast } from '../components/Toast';
-import { optimizeCloudinaryUrl } from '../lib/cloudinary';
+import { getOptimizedUrl } from '../lib/cloudinary';
+import { getListingPhotos } from '../lib/listingPhotos';
 import RatingStars from '../components/RatingStars';
 
 const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'] as const;
@@ -74,13 +75,7 @@ const getMapUrl = (listing: Listing) => {
   return '';
 };
 
-const getListingImages = (listing: Listing) => {
-  const arrayImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
-  const photoImages = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
-  const singleImage = String((listing as any).image || (listing as any).bannerImage || '').trim();
-  const merged = [...arrayImages, ...photoImages, ...(singleImage ? [singleImage] : [])];
-  return merged.map((url) => optimizeCloudinaryUrl(url)).filter(Boolean);
-};
+const getListingImages = (listing: Listing) => getListingPhotos(listing as unknown as Record<string, unknown>);
 
 const getStructuredItems = (listing: Listing) => {
   const fromItems = Array.isArray((listing as any).items) ? (listing as any).items : [];
@@ -100,100 +95,6 @@ const getPrimaryPrice = (listing: Listing) => {
   const value = Number((listing as any).pricePerMonth || (listing as any).price || listing.pricePlan || 0);
   return Number.isFinite(value) && value > 0 ? value : null;
 };
-
-function ListingImageCarousel({ listingId, images }: { listingId: string; images: string[] }) {
-  const [index, setIndex] = useState(0);
-  const [touchStartX, setTouchStartX] = useState<number | null>(null);
-
-  useEffect(() => {
-    setIndex(0);
-  }, [listingId]);
-
-  if (images.length === 0) {
-    return <div className="aspect-[16/9] bg-[#161624]" />;
-  }
-
-  const prev = (event?: React.MouseEvent) => {
-    event?.preventDefault();
-    event?.stopPropagation();
-    setIndex((current) => (current - 1 + images.length) % images.length);
-  };
-
-  const next = (event?: React.MouseEvent) => {
-    event?.preventDefault();
-    event?.stopPropagation();
-    setIndex((current) => (current + 1) % images.length);
-  };
-
-  return (
-    <div
-      className="relative aspect-[16/9] overflow-hidden group"
-      onTouchStart={(e) => setTouchStartX(e.touches[0]?.clientX ?? null)}
-      onTouchEnd={(e) => {
-        if (touchStartX === null) return;
-        const endX = e.changedTouches[0]?.clientX ?? touchStartX;
-        const diff = endX - touchStartX;
-        if (Math.abs(diff) > 40) {
-          if (diff > 0) prev();
-          else next();
-        }
-        setTouchStartX(null);
-      }}
-    >
-      <div
-        className="flex h-full transition-transform duration-300 ease-in-out"
-        style={{ transform: `translateX(-${index * 100}%)` }}
-      >
-        {images.map((imageUrl, imageIndex) => (
-          <img
-            key={`${imageUrl}-${imageIndex}`}
-            src={imageUrl}
-            alt="Listing"
-            className="listing-image flex-shrink-0 w-full h-full"
-            loading={imageIndex === 0 ? 'eager' : 'lazy'}
-          />
-        ))}
-      </div>
-
-      {images.length > 1 && (
-        <>
-          <button
-            type="button"
-            onClick={prev}
-            className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-            aria-label="Previous image"
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            onClick={next}
-            className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-            aria-label="Next image"
-          >
-            ›
-          </button>
-        </>
-      )}
-
-      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-        {images.map((_, dotIndex) => (
-          <button
-            key={dotIndex}
-            type="button"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              setIndex(dotIndex);
-            }}
-            className={`w-2 h-2 rounded-full ${dotIndex === index ? 'bg-primary' : 'bg-border'}`}
-            aria-label={`Go to image ${dotIndex + 1}`}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
 
 const SkeletonCard = () => (
   <div className="card overflow-hidden p-0">
@@ -336,27 +237,50 @@ export default function Home() {
     const mapUrl = getMapUrl(listing);
     const hasContact = Boolean(normalizePhone(contactNumber));
     const listingImages = getListingImages(listing).slice(0, 5);
+    const primaryImage = listingImages[0] ? getOptimizedUrl(listingImages[0], 'thumb') : '';
     const listingItems = getStructuredItems(listing).slice(0, 3);
     const showItemsPreview = listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop';
     const price = getPrimaryPrice(listing);
-    const imageEnabled = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'].includes(String(listing.category));
     const tagLabel = CATEGORY_LABELS[listing.category] || listing.category;
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
-        {imageEnabled && listingImages.length > 0 && (
-          <div className="relative rounded-t-2xl overflow-hidden">
-            <ListingImageCarousel listingId={listing.id} images={listingImages} />
-            <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
-              {tagLabel}
+        <div className="relative rounded-t-2xl overflow-hidden aspect-[16/9] bg-[#161624]">
+          {primaryImage ? (
+            <img
+              src={primaryImage}
+              alt={listing.name}
+              className="listing-image"
+              loading="lazy"
+              onError={(event) => {
+                const target = event.currentTarget;
+                target.onerror = null;
+                target.src = '/placeholder.jpg';
+                console.error('Card image failed:', primaryImage);
+              }}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-zinc-500">
+              <Camera size={26} />
+            </div>
+          )}
+          <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
+            {tagLabel}
+          </span>
+          {price && (
+            <span className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/75 backdrop-blur text-white text-sm font-bold">
+              ₹{price.toLocaleString('en-IN')}
             </span>
-            {price && (
-              <span className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/75 backdrop-blur text-white text-sm font-bold">
-                ₹{price.toLocaleString('en-IN')}
-              </span>
-            )}
+          )}
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+            {Array.from({ length: Math.max(1, Math.min(5, listingImages.length || 1)) }).map((_, index) => (
+              <span
+                key={index}
+                className={`rounded-full ${index === 0 ? 'bg-[#FF7A00] w-2.5 h-2.5' : 'bg-[#2A2A3D] w-2 h-2'}`}
+              />
+            ))}
           </div>
-        )}
+        </div>
 
         <div className="p-4 border-t border-border">
           <h3 className="text-lg font-bold leading-tight">{listing.name}</h3>

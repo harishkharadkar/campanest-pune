@@ -92,8 +92,6 @@ export interface Listing {
   };
   phone: string;
   whatsapp?: string;
-  images?: string[];
-  image?: string;
   photos?: string[];
   active: boolean;
   createdAt: any;

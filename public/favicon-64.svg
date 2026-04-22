@@ -1,6 +1,6 @@
 <svg width="64" height="64" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-  <path d="M22 18 H78 V54 C78 67 67 77 52.5 84 C51 84.8 49 84.8 47.5 84 C33 77 22 67 22 54 Z" fill="#FF7A00"/>
-  <path d="M63.1 37 A18 18 0 1 1 63.1 55" fill="none" stroke="#1C1C1C" stroke-width="22" stroke-linecap="round"/>
+  <path d="M22 18 H78 V55 C78 69 66.5 79.5 52 87 C50.8 87.6 49.2 87.6 48 87 C33.5 79.5 22 69 22 55 Z" fill="#FF7A00"/>
+  <path d="M62 36 A20 20 0 1 1 62 58" fill="none" stroke="#1C1C1C" stroke-width="13.5" stroke-linecap="round"/>
   <circle cx="78" cy="18" r="12" fill="#00BFA5"/>
-  <text x="78" y="23" text-anchor="middle" font-size="13" font-weight="800" font-family="Poppins, Nunito, sans-serif" fill="#1A1A1A">P</text>
+  <text x="78" y="18" text-anchor="middle" dominant-baseline="middle" font-size="13" font-weight="800" font-family="Poppins, Nunito, sans-serif" fill="#1A1A1A">P</text>
 </svg>

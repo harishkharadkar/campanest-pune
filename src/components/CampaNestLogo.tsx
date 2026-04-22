@@ -9,8 +9,8 @@ export default function CampaNestLogo({
   size = 80,
   variant = 'icon'
 }: CampaNestLogoProps) {
-  const shieldPath = 'M22 18 H78 V54 C78 67 67 77 52.5 84 C51 84.8 49 84.8 47.5 84 C33 77 22 67 22 54 Z';
-  const cArcPath = 'M63.1 37 A18 18 0 1 1 63.1 55';
+  const shieldPath = 'M22 18 H78 V55 C78 69 66.5 79.5 52 87 C50.8 87.6 49.2 87.6 48 87 C33.5 79.5 22 69 22 55 Z';
+  const cArcPath = 'M62 36 A20 20 0 1 1 62 58';
 
   const icon = (
     <svg width={size} height={size} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="CampaNest logo icon">
@@ -19,14 +19,15 @@ export default function CampaNestLogo({
         d={cArcPath}
         fill="none"
         stroke="#1C1C1C"
-        strokeWidth="22"
+        strokeWidth="13.5"
         strokeLinecap="round"
       />
       <circle cx="78" cy="18" r="12" fill="#00BFA5" />
       <text
         x="78"
-        y="23"
+        y="18"
         textAnchor="middle"
+        dominantBaseline="middle"
         fontSize="13"
         fontWeight="800"
         fontFamily="Poppins, Nunito, sans-serif"

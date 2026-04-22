@@ -10,49 +10,46 @@ service cloud.firestore {
         && request.auth.token.email == "campanest7@gmail.com";
     }
 
-    function isAnalyticsOnlyUpdate() {
+    function isViewIncrementOnly() {
+      let changed = request.resource.data.diff(resource.data).changedKeys();
+      let removed = request.resource.data.diff(resource.data).removedKeys();
+      let oldViews = resource.data.views is number
+        ? resource.data.views
+        : (resource.data.totalViews is number ? resource.data.totalViews : 0);
+
+      return removed.size() == 0
+        && changed.hasOnly(["views", "totalViews"])
+        && request.resource.data.views is number
+        && request.resource.data.totalViews is number
+        && request.resource.data.views >= 0
+        && request.resource.data.totalViews >= 0
+        && request.resource.data.views == request.resource.data.totalViews
+        && request.resource.data.views == oldViews + 1;
+    }
+
+    function isRatingAggregateOnlyUpdate() {
       let changed = request.resource.data.diff(resource.data).changedKeys();
       let removed = request.resource.data.diff(resource.data).removedKeys();
 
       return isSignedIn()
         && removed.size() == 0
-        && changed.size() > 0
-        && changed.hasOnly([
-          "views",
-          "totalViews",
-          "avgRating",
-          "averageRating",
-          "totalRatings",
-          "lastUpdated"
-        ])
-        && (
-          changed.hasAny(["views", "totalViews"])
-          || changed.hasAny(["avgRating", "averageRating", "totalRatings"])
-        )
-        && (
-          !changed.hasAny(["views", "totalViews"])
-          || (
-            changed.hasAll(["views", "totalViews"])
-            && request.resource.data.views is number
-            && request.resource.data.totalViews is number
-            && request.resource.data.views >= 0
-            && request.resource.data.totalViews >= 0
-            && request.resource.data.totalViews == request.resource.data.views
-          )
-        )
-        && (
-          !changed.hasAny(["avgRating", "averageRating", "totalRatings"])
-          || (
-            changed.hasAll(["avgRating", "averageRating", "totalRatings"])
-            && request.resource.data.totalRatings is number
-            && request.resource.data.totalRatings >= 0
-            && request.resource.data.avgRating is number
-            && request.resource.data.averageRating is number
-            && request.resource.data.avgRating >= 0
-            && request.resource.data.avgRating <= 5
-            && request.resource.data.averageRating == request.resource.data.avgRating
-          )
-        );
+        && changed.hasAll(["avgRating", "averageRating", "totalRatings"])
+        && changed.hasOnly(["avgRating", "averageRating", "totalRatings", "lastUpdated"])
+        && request.resource.data.totalRatings is number
+        && request.resource.data.totalRatings >= 0
+        && request.resource.data.avgRating is number
+        && request.resource.data.avgRating >= 0
+        && request.resource.data.avgRating <= 5
+        && request.resource.data.averageRating == request.resource.data.avgRating;
+    }
+
+    function isValidRatingWrite(listingId, uid) {
+      return request.resource.data.uid == uid
+        && request.resource.data.rating is number
+        && request.resource.data.rating >= 1
+        && request.resource.data.rating <= 5
+        && request.resource.data.createdAt != null
+        && request.resource.data.updatedAt != null;
     }
 
     match /listings/{listingId} {
@@ -61,21 +58,26 @@ service cloud.firestore {
       // Admin keeps full listing control.
       allow create, delete: if isAdmin();
 
-      // Students can update analytics fields only.
-      allow update: if isAdmin() || isAnalyticsOnlyUpdate();
+      // Guest/users can only increment views by exactly +1.
+      // Signed-in users can also update rating aggregates after rating writes.
+      allow update: if isAdmin() || isViewIncrementOnly() || isRatingAggregateOnlyUpdate();
+
+      match /ratings/{uid} {
+        allow read: if true;
+
+        // One rating document per user per listing.
+        allow create, update: if isSignedIn()
+          && request.auth.uid == uid
+          && isValidRatingWrite(listingId, uid);
+
+        allow delete: if isAdmin() || (isSignedIn() && request.auth.uid == uid);
+      }
     }
 
+    // Legacy top-level ratings collection is read-only for backward compatibility.
     match /ratings/{ratingId} {
       allow read: if true;
-
-      // Students can add rating.
-      allow create: if isSignedIn();
-
-      // Admin can delete fake ratings.
-      allow delete: if isAdmin();
-
-      // No updates allowed.
-      allow update: if false;
+      allow create, update, delete: if isAdmin();
     }
 
     match /menuItems/{menuItemId} {

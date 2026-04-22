@@ -46,10 +46,10 @@ export interface MenuItem {
 
 export interface Rating {
   id?: string;
-  listingId: string;
-  userId: string;
+  uid: string;
   rating: number;
   createdAt: any;
+  updatedAt?: any;
 }
 
 export interface ProviderProfile {

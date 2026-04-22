@@ -758,7 +758,7 @@ export default function AdminAddListing() {
                   </div>
                 ))}
                 {photos.length < photoLimit && (
-                  <label className="aspect-square rounded-lg border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center text-zinc-500 cursor-pointer hover:border-primary transition-colors">
+                  <label className="aspect-square upload-dropzone flex flex-col items-center justify-center text-text-muted cursor-pointer">
                     <Upload size={20} />
                     <span className="text-[10px] mt-1">{allowsSingleImage ? 'Upload 1' : 'Upload 4-5'}</span>
                     <input type="file" className="hidden" accept="image/*" multiple={allowsMultipleImages} onChange={onPhotoChange} />

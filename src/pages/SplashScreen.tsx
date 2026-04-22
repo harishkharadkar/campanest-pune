@@ -32,17 +32,7 @@ export default function SplashScreen() {
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
       >
-        <CampaNestLogo size={120} />
-      </motion.div>
-      <motion.div
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.3, duration: 0.5 }}
-        className="text-center mt-6"
-      >
-        <h1 className="text-4xl font-bold text-primary">CampaNest</h1>
-        <p className="text-accent font-medium tracking-widest uppercase text-sm">Pune</p>
-        <p className="text-zinc-500 text-xs mt-4">Your campus. Your neighbourhood.</p>
+        <CampaNestLogo size={128} variant="full" />
       </motion.div>
     </div>
   );

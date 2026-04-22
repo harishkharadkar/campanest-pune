@@ -1,10 +1,11 @@
-﻿import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, increment, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { collection, doc, getDoc, getDocs, increment, limit, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
 import { ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
 import { useToast } from '../components/Toast';
+import RatingStars from '../components/RatingStars';
 import { CATEGORY_LABELS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { optimizeCloudinaryUrl } from '../lib/cloudinary';
@@ -56,6 +57,7 @@ const getListingMapUrl = (listing: Listing) => {
 };
 
 const IMAGE_ENABLED_CATEGORIES = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'] as const;
+const VIEWED_LISTINGS_KEY = 'campanest:viewedListings';
 
 const getListingImages = (listing: Listing) => {
   const arrayImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
@@ -88,12 +90,43 @@ const getStructuredListingItems = (listing: Listing, menuItems: MenuItem[]) => {
     .filter((item) => item.name && Number.isFinite(item.price));
 };
 
+const getPrimaryPrice = (listing: Listing) => {
+  const value = Number((listing as any).pricePerMonth || (listing as any).price || listing.pricePlan || 0);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const roundToOneDecimal = (value: number) => Number(value.toFixed(1));
+
+const getViewedListingIds = (): string[] => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(VIEWED_LISTINGS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.map((item) => String(item || '').trim()).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
+const hasViewedListingInSession = (listingId: string) => getViewedListingIds().includes(listingId);
+
+const markListingViewedInSession = (listingId: string) => {
+  try {
+    const ids = new Set(getViewedListingIds());
+    ids.add(listingId);
+    sessionStorage.setItem(VIEWED_LISTINGS_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // Ignore session storage failures and keep runtime behavior stable.
+  }
+};
+
+const sanitizeStars = (value: number) => Math.min(5, Math.max(1, Math.round(value)));
+
 export default function ListingDetail() {
   const { id } = useParams<{ id: string }>();
   const listingId = (id || '').trim();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { showToast } = useToast();
+
   const [listing, setListing] = useState<Listing | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [loadingMenuItems, setLoadingMenuItems] = useState(false);
@@ -103,6 +136,10 @@ export default function ListingDetail() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [showWarning, setShowWarning] = useState(true);
+  const [ratingsBreakdown, setRatingsBreakdown] = useState<number[]>([0, 0, 0, 0, 0]);
+  const [similarListings, setSimilarListings] = useState<Listing[]>([]);
+  const [animateBars, setAnimateBars] = useState(false);
+  const ratingsSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -112,17 +149,21 @@ export default function ListingDetail() {
       }
 
       try {
-        const ref = doc(db, 'listings', listingId);
-        const snap = await getDoc(ref);
+        const listingRef = doc(db, 'listings', listingId);
+        const snap = await getDoc(listingRef);
 
         if (!snap.exists()) {
           setListing(null);
           return;
         }
 
-        const data = { id: snap.id, ...snap.data() } as Listing;
-        setListing(data);
+        const listingData = { id: snap.id, ...snap.data() } as Listing;
+        setListing(listingData);
         setLoadingMenuItems(true);
+
+        const warningKey = `warningDismissed:${listingId}`;
+        const hiddenForSession = sessionStorage.getItem(warningKey) === '1';
+        setShowWarning(!hiddenForSession);
 
         try {
           const menuSnap = await getDocs(query(collection(db, 'menuItems'), where('listingId', '==', listingId)));
@@ -130,7 +171,7 @@ export default function ListingDetail() {
             const fetchedItems = menuSnap.docs.map((menuDoc) => ({ id: menuDoc.id, ...menuDoc.data() } as MenuItem));
             setMenuItems(fetchedItems);
           } else {
-            const inlineItems = Array.isArray((data as any).menuItems) ? (data as any).menuItems : [];
+            const inlineItems = Array.isArray((listingData as any).menuItems) ? (listingData as any).menuItems : [];
             setMenuItems(
               inlineItems.map((item: any, index: number) => ({
                 id: `inline-${index}`,
@@ -140,48 +181,69 @@ export default function ListingDetail() {
                 category: item.category || 'Other',
                 servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails : [],
                 listingId,
-                listingName: data.name || '',
-                location: data.area || data.address || ''
+                listingName: listingData.name || '',
+                location: listingData.area || listingData.address || ''
               }))
             );
           }
         } catch {
-          const inlineItems = Array.isArray((data as any).menuItems) ? (data as any).menuItems : [];
-          setMenuItems(
-            inlineItems.map((item: any, index: number) => ({
-              id: `inline-${index}`,
-              itemName: String(item.itemName || ''),
-              price: Number(item.price || 0),
-              type: item.type === 'Non-Veg' ? 'Non-Veg' : 'Veg',
-              category: item.category || 'Other',
-              servingDetails: Array.isArray(item.servingDetails) ? item.servingDetails : [],
-              listingId,
-              listingName: data.name || '',
-              location: data.area || data.address || ''
-            }))
-          );
+          setMenuItems([]);
         } finally {
           setLoadingMenuItems(false);
         }
 
-        setUserRating(0);
+        try {
+          const ratingsSnap = await getDocs(collection(db, 'listings', listingId, 'ratings'));
+          const counts = [0, 0, 0, 0, 0];
+          ratingsSnap.docs.forEach((ratingDoc) => {
+            const rating = Number((ratingDoc.data() as any).rating || 0);
+            if (rating >= 1 && rating <= 5) counts[rating - 1] += 1;
+          });
+          setRatingsBreakdown(counts);
+        } catch {
+          setRatingsBreakdown([0, 0, 0, 0, 0]);
+        }
+
+        if (user?.uid) {
+          try {
+            const existingRatingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
+            const existingRatingSnap = await getDoc(existingRatingRef);
+            const value = Number(existingRatingSnap.data()?.rating || 0);
+            setUserRating(value >= 1 && value <= 5 ? value : 0);
+          } catch {
+            setUserRating(0);
+          }
+        } else {
+          setUserRating(0);
+        }
 
         try {
-          await updateDoc(ref, {
-            views: increment(1),
-            totalViews: increment(1)
-          });
-          setListing((prev) => {
-            if (!prev) return prev;
-            const currentViews = Number(prev.views ?? prev.totalViews ?? 0);
-            const nextViews = currentViews + 1;
-            return {
-              ...prev,
-              views: nextViews,
-              totalViews: nextViews
-            };
-          });
-          console.log('[ListingDetail] views incremented', { listingId });
+          const similarQuery = query(
+            collection(db, 'listings'),
+            where('active', '==', true),
+            where('category', '==', listingData.category),
+            limit(4)
+          );
+          const similarSnap = await getDocs(similarQuery);
+          const rows = similarSnap.docs
+            .map((item) => ({ id: item.id, ...item.data() } as Listing))
+            .filter((item) => item.id !== listingId);
+          setSimilarListings(rows.slice(0, 3));
+        } catch {
+          setSimilarListings([]);
+        }
+
+        try {
+          if (!hasViewedListingInSession(listingId)) {
+            await updateDoc(listingRef, { views: increment(1), totalViews: increment(1) });
+            markListingViewedInSession(listingId);
+            setListing((prev) => {
+              if (!prev) return prev;
+              const currentViews = Number(prev.views ?? prev.totalViews ?? 0);
+              const nextViews = currentViews + 1;
+              return { ...prev, views: nextViews, totalViews: nextViews };
+            });
+          }
         } catch (viewError) {
           console.warn('[ListingDetail] failed to increment views', viewError);
         }
@@ -193,15 +255,31 @@ export default function ListingDetail() {
     };
 
     void load();
-  }, [listingId, showToast]);
+  }, [listingId, showToast, user?.uid]);
 
   useEffect(() => {
     setActiveImageIndex(0);
   }, [listing?.id]);
 
-  if (loading) return <div className="h-screen flex items-center justify-center bg-background text-zinc-500">Loading...</div>;
-  if (!listing) return <div className="h-screen flex items-center justify-center bg-background text-zinc-500">Listing not found</div>;
-  console.log('[ListingDetail] listing render', listing);
+  useEffect(() => {
+    if (!ratingsSectionRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setAnimateBars(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+    observer.observe(ratingsSectionRef.current);
+    return () => observer.disconnect();
+  }, [listing?.id]);
+
+  if (loading) return <div className="h-screen flex items-center justify-center text-text-muted">Loading listing...</div>;
+  if (!listing) return <div className="h-screen flex items-center justify-center text-text-muted">Listing not found.</div>;
 
   const isExpired = listing.validUntil?.toDate?.()?.getTime?.() ? listing.validUntil.toDate().getTime() < Date.now() : false;
   const todayLower = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date()).toLowerCase();
@@ -211,24 +289,30 @@ export default function ListingDetail() {
   const todayMenuFromItems = normalizedMenuItems.slice(0, 8);
   const structuredItems = getStructuredListingItems(listing, normalizedMenuItems);
 
-  const displayedAverageRating = Number(listing.averageRating ?? listing.avgRating ?? 0);
-  const displayedTotalRatings = Number(listing.totalRatings ?? 0);
+  const displayedAverageRating = Math.min(5, Math.max(0, Number(listing.avgRating ?? listing.averageRating ?? 0)));
+  const displayedTotalRatings = Math.max(0, Number(listing.totalRatings ?? 0));
   const displayedViews = Number(listing.views ?? listing.totalViews ?? 0);
-  const listingImageArray = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
-  const hasImageArray = listingImageArray.length > 0;
-  const singleListingImage = optimizeCloudinaryUrl(String((listing as any).image || (listing as any).bannerImage || '').trim());
   const listingImages = getListingImages(listing);
   const isImageAllowed = IMAGE_ENABLED_CATEGORIES.includes(listing.category as any);
-  const currentImage = hasImageArray ? (listingImages[activeImageIndex] || '') : singleListingImage;
+  const currentImage = listingImages[activeImageIndex] || optimizeCloudinaryUrl(String((listing as any).image || (listing as any).bannerImage || ''));
+  const warningKey = `warningDismissed:${listingId}`;
+  const warningText = String(
+    (listing as any).warning
+    || 'Do not make any advance payment without verifying the service in person. CampaNest is not responsible for financial transactions.'
+  );
+  const price = getPrimaryPrice(listing);
+
+  const breakdownTotal = ratingsBreakdown.reduce((sum, current) => sum + current, 0);
+  const getPercentage = (count: number) => (breakdownTotal === 0 ? 0 : Math.round((count / breakdownTotal) * 100));
 
   const prevImage = () => {
     if (listingImages.length < 2) return;
-    setActiveImageIndex((prev) => (prev - 1 + listingImages.length) % listingImages.length);
+    setActiveImageIndex((current) => (current - 1 + listingImages.length) % listingImages.length);
   };
 
   const nextImage = () => {
     if (listingImages.length < 2) return;
-    setActiveImageIndex((prev) => (prev + 1) % listingImages.length);
+    setActiveImageIndex((current) => (current + 1) % listingImages.length);
   };
 
   const copyLink = async () => {
@@ -239,62 +323,84 @@ export default function ListingDetail() {
   const handleRate = async (stars: number) => {
     if (!listingId || !listing) return;
     if (!user?.uid) {
-      showToast('Please login to rate this listing', 'error');
+      showToast('Please login to rate', 'error');
+      return;
+    }
+
+    const isStudent = profile?.role === 'student';
+    if (!isStudent) {
+      showToast('Only students can rate listings', 'error');
       return;
     }
 
     setSubmittingRating(true);
     try {
       const listingRef = doc(db, 'listings', listingId);
-      const ratingRef = doc(collection(db, 'ratings'));
+      const ratingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
+      const nextStars = sanitizeStars(stars);
 
-      const nextMetrics = await runTransaction(db, async (tx) => {
-        const listingSnap = await tx.get(listingRef);
-        if (!listingSnap.exists()) {
-          throw new Error('Listing not found');
-        }
+      const nextMetrics = await runTransaction(db, async (transaction) => {
+        const listingSnap = await transaction.get(listingRef);
+        if (!listingSnap.exists()) throw new Error('Listing not found');
+        const oldRatingSnap = await transaction.get(ratingRef);
+        const existingCreatedAt = oldRatingSnap.data()?.createdAt;
 
-        const listingData = listingSnap.data() as Listing;
-        const oldAverage = Number(listingData.averageRating ?? listingData.avgRating ?? 0);
-        const oldTotalRatings = Math.max(0, Number(listingData.totalRatings || 0));
-        const newTotalRatings = oldTotalRatings + 1;
-        const newAverage = Number((((oldAverage * oldTotalRatings) + stars) / newTotalRatings).toFixed(2));
-
-        tx.set(ratingRef, {
-          listingId,
-          userId: user.uid,
-          rating: stars,
-          createdAt: serverTimestamp()
+        const allRatingsSnap = await getDocs(collection(db, 'listings', listingId, 'ratings'));
+        const ratingsByUser = new Map<string, number>();
+        allRatingsSnap.docs.forEach((ratingDoc) => {
+          const uid = String(ratingDoc.id || '');
+          const value = sanitizeStars(Number((ratingDoc.data() as any)?.rating || 0));
+          if (uid) ratingsByUser.set(uid, value);
         });
+        ratingsByUser.set(user.uid, nextStars);
 
-        tx.update(listingRef, {
-          averageRating: newAverage,
-          avgRating: newAverage,
-          totalRatings: newTotalRatings,
+        let total = 0;
+        let sum = 0;
+        const counts = [0, 0, 0, 0, 0];
+        ratingsByUser.forEach((ratingValue) => {
+          total += 1;
+          sum += ratingValue;
+          counts[ratingValue - 1] += 1;
+        });
+        const average = total > 0 ? roundToOneDecimal(sum / total) : 0;
+
+        transaction.set(
+          ratingRef,
+          {
+            uid: user.uid,
+            rating: nextStars,
+            createdAt: existingCreatedAt || serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        transaction.update(listingRef, {
+          avgRating: average,
+          averageRating: average,
+          totalRatings: total,
           lastUpdated: serverTimestamp()
         });
 
-        return { newAverage, newTotalRatings };
-      });
-
-      console.log('[ListingDetail] rating saved', {
-        listingId,
-        rating: stars,
-        averageRating: nextMetrics.newAverage,
-        totalRatings: nextMetrics.newTotalRatings
+        return {
+          average,
+          total,
+          counts
+        };
       });
 
       setListing((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          averageRating: nextMetrics.newAverage,
-          avgRating: nextMetrics.newAverage,
-          totalRatings: nextMetrics.newTotalRatings
+          averageRating: nextMetrics.average,
+          avgRating: nextMetrics.average,
+          totalRatings: nextMetrics.total
         };
       });
-      setUserRating(stars);
-      showToast('Rating submitted', 'success');
+      setRatingsBreakdown(nextMetrics.counts);
+      setUserRating(nextStars);
+      showToast('Thanks for your rating!', 'success');
     } catch (error: any) {
       showToast(error?.message || 'Failed to submit rating', 'error');
     } finally {
@@ -303,281 +409,292 @@ export default function ListingDetail() {
   };
 
   return (
-    <div className="min-h-screen pb-32">
-      <div className="px-6 pt-5">
-        <div className="rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900 to-zinc-950 px-6 py-8 text-center">
-          <p className="text-2xl font-extrabold tracking-wide text-zinc-100">CampaNest Pune</p>
-          <p className="mt-1 text-xs text-zinc-500">Student Marketplace</p>
+    <div className="min-h-screen pb-24">
+      <div className="max-w-7xl mx-auto px-5 sm:px-6 pt-6">
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={() => navigate(-1)} className="btn-outline px-4 py-2 text-sm inline-flex items-center gap-1.5">
+            <ChevronLeft size={16} /> Back
+          </button>
+          <button onClick={copyLink} className="btn-outline px-4 py-2 text-sm inline-flex items-center gap-1.5">
+            <Copy size={16} /> Share
+          </button>
         </div>
-        <div className="mt-3 flex justify-between">
-          <button onClick={() => navigate(-1)} className="p-2 bg-zinc-900 border border-zinc-800 rounded-full text-white"><ChevronLeft /></button>
-          <button onClick={copyLink} className="p-2 bg-zinc-900 border border-zinc-800 rounded-full text-white"><Copy size={18} /></button>
-        </div>
-      </div>
 
-      <div className="px-6 mt-4 relative z-10 space-y-6">
         {showWarning && (
-          <div className="relative bg-[#5a4a00] text-white px-4 py-3 rounded-lg shadow-md">
+          <div className="warning-banner-enter mt-4 card bg-[#1A1A28] border-l-[3px] border-l-warning">
             <button
               type="button"
-              className="absolute top-2 right-3 bg-transparent border-none text-base cursor-pointer text-white"
-              onClick={() => setShowWarning(false)}
-              aria-label="Close warning banner"
-            >
-              ✕
-            </button>
-            <p className="pr-6 text-sm leading-relaxed whitespace-pre-line">
-              ⚠️ Do not make any advance payment without verifying the service in person.
-              {'\n'}
-              CampaNest is not responsible for any financial transactions.
-            </p>
-          </div>
-        )}
-
-        {isImageAllowed && currentImage && (
-          <div className="card p-0 overflow-hidden">
-            <div
-              className="relative aspect-[16/10] bg-zinc-900"
-              onTouchStart={(e) => setTouchStartX(e.touches[0]?.clientX ?? null)}
-              onTouchEnd={(e) => {
-                if (touchStartX === null) return;
-                const endX = e.changedTouches[0]?.clientX ?? touchStartX;
-                const diff = endX - touchStartX;
-                if (Math.abs(diff) > 40) {
-                  if (diff > 0) prevImage();
-                  else nextImage();
-                }
-                setTouchStartX(null);
+              onClick={() => {
+                setShowWarning(false);
+                sessionStorage.setItem(warningKey, '1');
               }}
+              className="absolute right-4 top-4 text-text-muted hover:text-text"
+              aria-label="Close warning"
             >
-              <img
-                src={currentImage}
-                alt={listing.name}
-                className="w-full h-full object-cover"
-                loading="eager"
-              />
-              {hasImageArray && listingImages.length > 1 && (
-                <>
-                  <button type="button" onClick={prevImage} className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/45 text-white text-lg w-8 h-8 rounded-full">‹</button>
-                  <button type="button" onClick={nextImage} className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/45 text-white text-lg w-8 h-8 rounded-full">›</button>
-                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
-                    {listingImages.map((_, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => setActiveImageIndex(i)}
-                        className={`text-sm leading-none ${i === activeImageIndex ? 'text-white' : 'text-white/60'}`}
-                        aria-label={`Image ${i + 1}`}
-                      >
-                        {i === activeImageIndex ? '●' : '○'}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="absolute top-2 right-2 text-[10px] bg-black/45 text-white px-2 py-0.5 rounded">
-                    {activeImageIndex + 1} / {listingImages.length}
-                  </p>
-                </>
-              )}
-            </div>
+              ✖
+            </button>
+            <p className="pr-8 text-sm text-text-muted leading-relaxed">
+              <span className="text-warning mr-1">⚠️</span>
+              {warningText}
+            </p>
           </div>
         )}
 
-        <div className="card bg-surface">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] bg-primary text-white px-2 py-1 rounded uppercase">{CATEGORY_LABELS[listing.category] || listing.category}</span>
-            {listing.category === 'advertisement' && listing.isSponsored && <span className="text-[10px] bg-fuchsia-600 text-white px-2 py-1 rounded">Sponsored</span>}
-            {isExpired && <span className="text-[10px] bg-red-600 text-white px-2 py-1 rounded">Expired</span>}
-          </div>
-          <h1 className="text-2xl font-bold">{listing.name}</h1>
-          <p className="text-zinc-500 text-sm mt-1">{listing.phone}</p>
-          <p className="text-zinc-500 text-sm flex items-center gap-1 mt-1"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege}</p>
-          <p className="text-zinc-500 text-xs mt-2">{formatLastUpdated(listing.lastUpdated || listing.createdAt)}</p>
-          <div className="mt-4 flex items-center gap-4 text-sm">
-            <span className="text-yellow-500 font-bold flex items-center gap-1"><Star size={14} fill="currentColor" /> {displayedAverageRating.toFixed(1)} ({displayedTotalRatings})</span>
-            <span className="text-zinc-500 font-bold flex items-center gap-1"><Eye size={14} /> {displayedViews}</span>
-          </div>
-          <div className="mt-3">
-            <div className="flex items-center gap-1 text-yellow-500">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <Star
-                  key={`avg-${star}`}
-                  size={20}
-                  fill={star <= Math.round(displayedAverageRating) ? 'currentColor' : 'none'}
-                />
-              ))}
-              <span className="text-zinc-400 text-xs ml-2">({displayedTotalRatings} ratings)</span>
-            </div>
-            <p className="text-zinc-400 text-xs mt-2">
-              {userRating > 0 ? `Your rating: ${'★'.repeat(userRating)}${'☆'.repeat(5 - userRating)}` : 'Tap to rate'}
-            </p>
-            <div className="flex items-center gap-1 mt-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  disabled={submittingRating}
-                  onClick={() => void handleRate(star)}
-                  className="p-1 rounded disabled:opacity-60"
-                  aria-label={`Rate ${star} star${star > 1 ? 's' : ''}`}
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-6">
+          <div className="space-y-5">
+            {isImageAllowed && currentImage && (
+              <div className="card p-0 overflow-hidden">
+                <div
+                  className="relative aspect-[16/9] bg-[#141422]"
+                  onTouchStart={(event) => setTouchStartX(event.touches[0]?.clientX ?? null)}
+                  onTouchEnd={(event) => {
+                    if (touchStartX === null) return;
+                    const endX = event.changedTouches[0]?.clientX ?? touchStartX;
+                    const diff = endX - touchStartX;
+                    if (Math.abs(diff) > 40) {
+                      if (diff > 0) prevImage();
+                      else nextImage();
+                    }
+                    setTouchStartX(null);
+                  }}
                 >
-                  <Star
-                    size={24}
-                    className={star <= userRating ? 'text-yellow-500' : 'text-zinc-500'}
-                    fill={star <= userRating ? 'currentColor' : 'none'}
-                  />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+                  <img src={currentImage} alt={listing.name} className="listing-image" loading="eager" />
+                  {listingImages.length > 1 && (
+                    <>
+                      <button type="button" onClick={prevImage} className="hidden md:flex absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">‹</button>
+                      <button type="button" onClick={nextImage} className="hidden md:flex absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/60 items-center justify-center text-white">›</button>
+                    </>
+                  )}
+                  <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
+                    {CATEGORY_LABELS[listing.category] || listing.category}
+                  </span>
+                  {isExpired && <span className="absolute top-3 right-3 tag-label px-3 py-1 rounded-full bg-red-500/80 text-white">Expired</span>}
+                </div>
 
-        {(listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop') && (
-          <div className="card space-y-3">
-            <h3 className="font-bold text-lg">{listing.category === 'shop' ? 'Items' : 'Food Items'}</h3>
-            {loadingMenuItems ? (
-              <p className="text-sm text-zinc-500">Loading items...</p>
-            ) : structuredItems.length === 0 ? (
-              <p className="text-sm text-zinc-500">Items not available right now.</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {structuredItems.map((item, index) => (
-                  <div key={`${item.name}-${item.price}-${index}`} className="border border-zinc-800 rounded-lg p-3 bg-zinc-900/50">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="font-semibold">{item.name}</p>
-                      <p className="font-bold text-primary">₹{Number(item.price)}</p>
+                {listingImages.length > 1 && (
+                  <div className="p-3 border-t border-border">
+                    <div className="flex items-center gap-2 overflow-x-auto">
+                      {listingImages.map((image, index) => (
+                        <button
+                          key={`${image}-${index}`}
+                          type="button"
+                          onClick={() => setActiveImageIndex(index)}
+                          className={`relative w-20 h-14 rounded-lg overflow-hidden border ${index === activeImageIndex ? 'border-primary' : 'border-border'}`}
+                        >
+                          <img src={image} alt={`Thumbnail ${index + 1}`} className="listing-image" loading="lazy" />
+                        </button>
+                      ))}
                     </div>
-                    {item.description && (
-                      <p className="text-xs text-zinc-500 mt-1">{item.description}</p>
-                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
-          </div>
-        )}
-
-        {listing.category === 'mess' && (
-          <div className="space-y-4">
-            <div className="card border-primary/50 bg-primary/10">
-              <h3 className="text-xl font-bold text-primary">Today&apos;s Menu</h3>
-              <p className="text-zinc-400 text-xs mt-1">{todayTitle}</p>
-              {todayMenuFromItems.length > 0 ? (
-                <ul className="mt-3 space-y-2 text-sm text-zinc-200">
-                  {todayMenuFromItems.map((item) => (
-                    <li key={item.id || item.itemName}>{item.itemName}</li>
-                  ))}
-                </ul>
-              ) : todayMenuItems.length > 0 ? (
-                <ul className="mt-3 space-y-2 text-sm text-zinc-200">
-                  {todayMenuItems.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-3 text-sm text-zinc-500">Menu not available for today.</p>
-              )}
-            </div>
 
             <div className="card">
-              <h3 className="text-lg font-bold">Mess Rates</h3>
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Monthly: {listing.monthlyRate ? `₹${listing.monthlyRate}` : 'N/A'}</p>
-                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Weekly: {listing.weeklyRate ? `₹${listing.weeklyRate}` : 'N/A'}</p>
-                <p className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2">Per Plate: {listing.perPlateRate ? `₹${listing.perPlateRate}` : 'N/A'}</p>
+              <h1 className="text-3xl">{listing.name}</h1>
+              <p className="mt-2 text-text-muted flex items-center gap-1 text-sm"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege || 'Campus Area'}</p>
+              <p className="mt-2 text-xs text-text-muted">{formatLastUpdated(listing.lastUpdated || listing.createdAt)}</p>
+              <div className="mt-4 flex items-center flex-wrap gap-4 text-sm">
+                <RatingStars avgRating={displayedAverageRating} totalRatings={displayedTotalRatings} size={14} className="font-medium" />
+                <span className="inline-flex items-center gap-1 text-text-muted"><Eye size={14} /> {displayedViews} views</span>
               </div>
             </div>
 
+            {(listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop') && (
+              <div className="card">
+                <h3 className="text-xl">{listing.category === 'shop' ? 'Items' : 'Menu'} </h3>
+                {loadingMenuItems ? (
+                  <p className="mt-3 text-sm text-text-muted">Loading items...</p>
+                ) : structuredItems.length === 0 ? (
+                  <p className="mt-3 text-sm text-text-muted">No items available right now.</p>
+                ) : (
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {structuredItems.map((item, index) => (
+                      <div key={`${item.name}-${index}`} className="rounded-xl border border-border bg-surface-elevated p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-medium">{item.name}</p>
+                          <p className="text-sm text-text-muted">₹{item.price}</p>
+                        </div>
+                        {item.description && <p className="mt-1.5 text-xs text-text-muted">{item.description}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {listing.category === 'mess' && (
+              <div className="card space-y-4">
+                <div>
+                  <h3 className="text-xl">Today&apos;s Menu</h3>
+                  <p className="text-xs text-text-muted mt-1">{todayTitle}</p>
+                  {todayMenuFromItems.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-sm text-text-muted">
+                      {todayMenuFromItems.map((item) => <li key={item.id || item.itemName}>• {item.itemName}</li>)}
+                    </ul>
+                  ) : todayMenuItems.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-sm text-text-muted">
+                      {todayMenuItems.map((item) => <li key={item}>• {item}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-text-muted">Menu not shared for today.</p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Monthly: {listing.monthlyRate ? `₹${listing.monthlyRate}` : 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Weekly: {listing.weeklyRate ? `₹${listing.weeklyRate}` : 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Per Plate: {listing.perPlateRate ? `₹${listing.perPlateRate}` : 'N/A'}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="font-bold text-sm">Weekly Menu</h4>
+                  {dayOrder.map((day) => (
+                    <div key={day} className="rounded-xl border border-border bg-surface-elevated px-3 py-2">
+                      <p className="text-xs tag-label text-primary capitalize">{day}</p>
+                      <p className="text-xs text-text-muted mt-1">{getMenuForDay(listing, day) || 'Not available'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(listing.category === 'pg' || listing.category === 'hostel' || listing.category === 'flat') && (
+              <div className="card">
+                <h3 className="text-xl">Amenities & Stay Details</h3>
+                <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Gender: {listing.gender || 'both'}</div>
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Room Type: {listing.roomType || 'withCot'}</div>
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Mess: {listing.messAvailable ? 'Available' : 'No'}</div>
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Rooms Left: {Number(((listing as any).roomsAvailable ?? listing.availableRooms) || 0)}</div>
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Area: {listing.area}</div>
+                  <div className="rounded-xl border border-border bg-surface-elevated p-3 text-sm">Near: {listing.nearCollege || 'N/A'}</div>
+                </div>
+              </div>
+            )}
+
             <div className="card">
-              <h3 className="text-lg font-bold">Weekly Menu</h3>
-              <div className="mt-3 space-y-2">
-                {dayOrder.map((day) => {
-                  const menuText = getMenuForDay(listing, day);
+              <h3 className="text-xl">Description</h3>
+              <p className="mt-3 text-sm text-text-muted leading-relaxed">{listing.description}</p>
+            </div>
+
+            <div className="card" ref={ratingsSectionRef}>
+              <h3 className="text-xl">Ratings & Reviews</h3>
+              <div className="mt-4">
+                <RatingStars avgRating={displayedAverageRating} totalRatings={displayedTotalRatings} size={20} />
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {[5, 4, 3, 2, 1].map((star) => {
+                  const count = ratingsBreakdown[star - 1];
+                  const percentage = getPercentage(count);
                   return (
-                    <div key={day} className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
-                      <p className="text-xs font-semibold text-primary capitalize">{day}</p>
-                      <p className="text-xs text-zinc-300 mt-1">{menuText || 'Not available'}</p>
+                    <div key={star} className="grid grid-cols-[40px_minmax(0,1fr)_44px] items-center gap-3 text-xs text-text-muted">
+                      <span>{star}★</span>
+                      <div className="rating-bar-track">
+                        <div className="rating-bar-fill" style={{ width: animateBars ? `${percentage}%` : '0%' }} />
+                      </div>
+                      <span className="text-right">{percentage}%</span>
                     </div>
                   );
                 })}
               </div>
+
+              <div className="mt-5">
+                <p className="text-xs text-text-muted mb-2">
+                  {userRating > 0 ? `Your rating: ${userRating} star${userRating > 1 ? 's' : ''} (tap to update)` : 'Rate this listing'}
+                </p>
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      disabled={submittingRating}
+                      onClick={() => void handleRate(star)}
+                      className="p-1 rounded-lg disabled:opacity-60"
+                      aria-label={`Rate ${star}`}
+                    >
+                      <Star size={24} className={star <= userRating ? 'text-warning' : 'text-border'} fill={star <= userRating ? 'currentColor' : 'none'} />
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
+
+            {similarListings.length > 0 && (
+              <div className="card">
+                <h3 className="text-xl">Similar Listings</h3>
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {similarListings.map((item) => {
+                    const image = getListingImages(item)[0];
+                    return (
+                      <Link key={item.id} to={`/listing/${item.id}`} className="rounded-xl border border-border bg-surface-elevated p-3 hover:border-primary transition-colors">
+                        {image && <img src={image} alt={item.name} className="w-full h-28 rounded-lg object-cover mb-3" loading="lazy" />}
+                        <p className="font-medium text-sm">{item.name}</p>
+                        <p className="text-xs text-text-muted mt-1">{item.area}</p>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-        )}
 
-        {(listing.category === 'pg' || listing.category === 'hostel' || listing.category === 'flat') && (
-          <div className="card space-y-2">
-            <h3 className="font-bold text-lg">Stay Details</h3>
-            <p className="text-sm text-zinc-300">Gender: {listing.gender || 'both'}</p>
-            <p className="text-sm text-zinc-300">Room type: {listing.roomType || 'withCot'}</p>
-            <p className="text-sm text-zinc-300">Mess: {listing.messAvailable ? 'Available' : 'Not available'}</p>
-            <p className="text-sm text-zinc-300">Price: {listing.pricePerMonth ? `₹${listing.pricePerMonth}` : 'Contact for price'}</p>
-            <p className="text-sm text-zinc-300">
-              {Number.isFinite(Number((listing as any).roomsAvailable ?? listing.availableRooms))
-                ? `${Number((listing as any).roomsAvailable ?? listing.availableRooms)} rooms left`
-                : 'Room availability not shared'}
-            </p>
-          </div>
-        )}
+          <aside className="space-y-4 lg:sticky lg:top-24 lg:h-fit">
+            <div className="card">
+              <p className="tag-label text-text-muted">Listing Price</p>
+              <p className="mt-2 text-3xl font-bold text-text">{price ? `₹${price.toLocaleString('en-IN')}` : 'Contact for Price'}</p>
+              <p className="mt-2 text-xs text-text-muted">{listing.category === 'advertisement' ? 'Sponsored placement plan' : 'Verified provider listing'}</p>
+            </div>
 
-        <div className="card">
-          <h3 className="font-bold mb-2">Description</h3>
-          <p className="text-sm text-zinc-300">{listing.description}</p>
-          <div className="mt-3 bg-zinc-900 border border-zinc-700 rounded-lg p-3 space-y-2">
-            <p className="text-[11px] text-zinc-300 leading-relaxed">
-              ही माहिती सेवा पुरवठादाराने दिलेली आहे. कृपया स्वतः तपासणी करून निर्णय घ्या.
-            </p>
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              This information is provided by the service provider. Please verify independently before making any decision.
-            </p>
-          </div>
-        </div>
+            <div className="card space-y-2">
+              <button
+                type="button"
+                onClick={() => { window.location.href = `tel:${listing.phone}`; }}
+                className="btn-outline w-full inline-flex items-center justify-center gap-2 rounded-xl"
+              >
+                <Phone size={16} /> Call
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const waNumber = normalizeWhatsAppNumber(listing.phone, listing.whatsapp);
+                  if (!waNumber) return;
+                  window.open(`https://wa.me/${waNumber}`, '_blank', 'noopener,noreferrer');
+                }}
+                className="btn-primary w-full inline-flex items-center justify-center gap-2 rounded-xl"
+              >
+                <MessageCircle size={16} /> WhatsApp
+              </button>
+              <button
+                type="button"
+                onClick={() => window.open(getListingMapUrl(listing), '_blank', 'noopener,noreferrer')}
+                className="btn-outline w-full inline-flex items-center justify-center gap-2 rounded-xl"
+              >
+                <Navigation size={16} /> View on Map
+              </button>
+              <button
+                type="button"
+                onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(window.location.href)}`, '_blank', 'noopener,noreferrer')}
+                className="btn-outline w-full inline-flex items-center justify-center gap-2 rounded-xl"
+              >
+                <Send size={16} /> Share Listing
+              </button>
+            </div>
 
-        <div className="card">
-          <h3 className="font-bold mb-2">Address</h3>
-          <p className="text-sm text-zinc-300">{listing.address}</p>
-          <button
-            onClick={() => window.open(getListingMapUrl(listing), '_blank', 'noopener,noreferrer')}
-            className="btn-outline w-full mt-4 flex items-center justify-center gap-2"
-          >
-            <Navigation size={16} /> Open in Maps
-          </button>
-        </div>
-      </div>
+            <div className="card bg-[#161622] border-l-[3px] border-l-warning">
+              <p className="text-sm text-text-muted leading-relaxed">
+                <span className="text-warning mr-1">⚠️</span>
+                Always verify in person before any transaction. CampaNest is not responsible for direct payments made to providers.
+              </p>
+            </div>
 
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] p-4 bg-background/90 backdrop-blur border-t border-zinc-800 z-30 space-y-2">
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = `tel:${listing.phone}`;
-            }}
-            className="flex-1 btn-outline flex items-center justify-center gap-2 py-3"
-          >
-            <Phone size={18} /> Call
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const waNumber = normalizeWhatsAppNumber(listing.phone, listing.whatsapp);
-              if (!waNumber) return;
-              window.open(`https://wa.me/${waNumber}`, '_blank', 'noopener,noreferrer');
-            }}
-            className="flex-1 bg-green-600 text-white font-bold rounded-lg flex items-center justify-center gap-2 py-3"
-          >
-            <MessageCircle size={18} /> WhatsApp
-          </button>
+            <div className="card">
+              <h4 className="font-bold text-sm">Address</h4>
+              <p className="mt-2 text-sm text-text-muted">{listing.address || 'Address not shared'}</p>
+            </div>
+          </aside>
         </div>
-        <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2">
-          <p className="text-[11px] text-zinc-300 leading-relaxed">
-            कॉल किंवा WhatsApp द्वारे होणाऱ्या संभाषणासाठी वापरकर्ता स्वतः जबाबदार आहे.
-          </p>
-          <p className="text-[11px] text-zinc-400 leading-relaxed mt-1">
-            Users are solely responsible for any communication via call or WhatsApp.
-          </p>
-        </div>
-        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(window.location.href)}`)} className="w-full bg-zinc-800 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2">
-          <Send size={16} /> Share
-        </button>
       </div>
     </div>
   );

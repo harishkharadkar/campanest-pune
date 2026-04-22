@@ -1,0 +1,22 @@
+<svg width="128" height="128" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <path d="M18 24 L50 8 L82 24 L82 62 L58 82 L50 86 L42 82 L18 62 Z" fill="#FF7A00"/>
+  <path
+    d="M67 31 C56 24 43 25 34 34 C25 43 25 57 34 66 C43 75 56 76 67 69"
+    fill="none"
+    stroke="#0A0A0F"
+    stroke-width="12"
+    stroke-linecap="round"
+  />
+  <circle cx="79" cy="23" r="13" fill="#00BFA5"/>
+  <text
+    x="79"
+    y="28"
+    text-anchor="middle"
+    font-size="14"
+    font-weight="800"
+    font-family="Inter, sans-serif"
+    fill="#FFFFFF"
+  >
+    P
+  </text>
+</svg>

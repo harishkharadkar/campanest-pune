@@ -1,13 +1,10 @@
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
 import { PWAProvider } from './context/PWAContext';
-import Disclaimer from './components/Disclaimer';
-import PWAInstallPrompt from './components/PWAInstallPrompt';
 import CampaNestLogo from './components/CampaNestLogo';
 import PanicButton from './components/PanicButton';
-import CustomPopup from './components/CustomPopup';
 
 const SplashScreen = lazy(() => import('./pages/SplashScreen'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -38,13 +35,78 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; role?: 'student' | '
   return <>{children}</>;
 };
 
+const SiteChrome = ({ children }: { children: React.ReactNode }) => {
+  const location = useLocation();
+  const { user } = useAuth();
+  const [scrolled, setScrolled] = React.useState(false);
+  const isAuthPage = location.pathname === '/login';
+
+  React.useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener('scroll', onScroll);
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return (
+    <div className="mobile-container">
+      {!isAuthPage && (
+        <header className={`sticky top-0 z-40 ${scrolled ? 'glass-navbar' : 'glass-navbar bg-[#0A0A0F]/50'}`}>
+          <div className="max-w-7xl mx-auto px-5 sm:px-6 py-3 flex items-center justify-between gap-4">
+            <Link to="/home" className="flex items-center gap-3">
+              <CampaNestLogo size={34} />
+              <span className="hidden md:inline text-lg font-extrabold text-[#FF7A00] leading-none">CampaNest</span>
+            </Link>
+            <nav className="hidden md:flex items-center gap-6">
+              <Link className="nav-link" to="/home">Buy/Rent</Link>
+              <Link className="nav-link" to="/home">PG & Hostels</Link>
+              <Link className="nav-link" to="/emergency">Emergency</Link>
+              <Link className="nav-link" to="/about">About</Link>
+            </nav>
+            <Link to={user ? '/home' : '/login'} className="btn-primary py-2 px-5 text-sm">
+              {user ? 'Dashboard' : 'Login / Sign up'}
+            </Link>
+          </div>
+        </header>
+      )}
+
+      {children}
+
+      {!isAuthPage && (
+        <footer className="mt-14 border-t border-border bg-[#0B0B12]">
+          <div className="max-w-7xl mx-auto px-5 sm:px-6 py-10 grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+              <h4 className="text-sm font-bold">CampaNest</h4>
+              <p className="mt-2 text-sm text-text-muted">Verified student-friendly rental and local services platform built with trust-first design.</p>
+            </div>
+            <div>
+              <h4 className="text-sm font-bold">Explore</h4>
+              <div className="mt-3 space-y-2 text-sm text-text-muted">
+                <p>PG & Hostel Listings</p>
+                <p>Flats & Shared Rooms</p>
+                <p>Food, Shops, Essentials</p>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-bold">Connect</h4>
+              <div className="mt-3 flex items-center gap-3 text-sm text-text-muted">
+                <span className="card px-3 py-2">IG</span>
+                <span className="card px-3 py-2">X</span>
+                <span className="card px-3 py-2">WA</span>
+              </div>
+              <p className="mt-4 text-xs text-text-muted">Home away from home for Pune students.</p>
+            </div>
+          </div>
+        </footer>
+      )}
+    </div>
+  );
+};
+
 const AppContent = () => {
   return (
     <Router>
-      <div className="mobile-container">
-        <Disclaimer />
-        <PWAInstallPrompt />
-        <CustomPopup message="Welcome to CampaNest" />
+      <SiteChrome>
         <Suspense fallback={<div className="h-screen flex items-center justify-center bg-background"><CampaNestLogo size={60} /></div>}>
           <Routes>
             <Route path="/" element={<SplashScreen />} />
@@ -52,7 +114,7 @@ const AppContent = () => {
             <Route path="/home" element={<ProtectedRoute role="student"><Home /></ProtectedRoute>} />
             <Route path="/emergency" element={<ProtectedRoute role="student"><EmergencyPage /></ProtectedRoute>} />
             <Route path="/student-dashboard" element={<Navigate to="/home" replace />} />
-            <Route path="/listing/:id" element={<ProtectedRoute role="student"><ListingDetail /></ProtectedRoute>} />
+            <Route path="/listing/:id" element={<ListingDetail />} />
             <Route path="/admin" element={<ProtectedRoute role="admin"><AdminPanel /></ProtectedRoute>} />
             <Route path="/admin-dashboard" element={<Navigate to="/admin" replace />} />
             <Route path="/admin/add-listing" element={<ProtectedRoute role="admin"><AdminAddListing /></ProtectedRoute>} />
@@ -61,7 +123,7 @@ const AppContent = () => {
           </Routes>
         </Suspense>
         <PanicButton />
-      </div>
+      </SiteChrome>
     </Router>
   );
 };

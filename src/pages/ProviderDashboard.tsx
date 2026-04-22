@@ -89,8 +89,10 @@ export default function ProviderDashboard() {
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-background text-zinc-500">Loading Dashboard...</div>;
 
-  const totalViews = listings.reduce((acc, curr) => acc + curr.totalViews, 0);
-  const avgRating = listings.length > 0 ? listings.reduce((acc, curr) => acc + curr.avgRating, 0) / listings.length : 0;
+  const totalViews = listings.reduce((acc, curr) => acc + Number(curr.totalViews ?? curr.views ?? 0), 0);
+  const avgRating = listings.length > 0
+    ? listings.reduce((acc, curr) => acc + Number(curr.avgRating ?? curr.averageRating ?? 0), 0) / listings.length
+    : 0;
   
   const daysRemaining = provider?.subscriptionEnd ? differenceInDays(provider.subscriptionEnd.toDate(), new Date()) : 0;
   const isExpired = daysRemaining < 0;
@@ -179,10 +181,10 @@ export default function ProviderDashboard() {
                     <h4 className="font-bold text-sm truncate">{listing.name}</h4>
                     <div className="flex items-center gap-3 mt-1">
                       <span className="text-[10px] text-zinc-500 flex items-center gap-1">
-                        <Eye size={10} /> {listing.totalViews}
+                        <Eye size={10} /> {Number(listing.totalViews ?? listing.views ?? 0)}
                       </span>
                       <span className="text-[10px] text-zinc-500 flex items-center gap-1">
-                        <Star size={10} className="text-yellow-500" /> {listing.avgRating.toFixed(1)}
+                        <Star size={10} className="text-yellow-500" /> {Number(listing.avgRating ?? listing.averageRating ?? 0).toFixed(1)}
                       </span>
                     </div>
                   </div>

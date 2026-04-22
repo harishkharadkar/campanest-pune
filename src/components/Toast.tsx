@@ -30,7 +30,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[100] w-full max-w-[400px] px-4 pointer-events-none">
+      <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[100] w-full max-w-[420px] px-4 pointer-events-none">
         <AnimatePresence>
           {toasts.map((toast) => (
             <motion.div
@@ -39,10 +39,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
               className={clsx(
-                "mb-2 p-4 rounded-xl shadow-lg flex items-center gap-3 pointer-events-auto",
-                toast.type === 'success' ? "bg-green-600 text-white" :
-                toast.type === 'error' ? "bg-red-600 text-white" :
-                "bg-zinc-800 text-white"
+                "mb-2 p-4 rounded-2xl border shadow-xl backdrop-blur-md flex items-center gap-3 pointer-events-auto",
+                toast.type === 'success' ? "bg-[#102118] border-green-500/40 text-green-100" :
+                toast.type === 'error' ? "bg-[#2A1416] border-red-500/40 text-red-100" :
+                "bg-[#1A1A28] border-border text-text"
               )}
             >
               {toast.type === 'success' && <CheckCircle size={20} />}

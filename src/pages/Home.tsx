@@ -1,13 +1,13 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
 import { Link, useNavigate } from 'react-router-dom';
 import { AREAS, CATEGORY_DESCRIPTIONS, CATEGORY_LABELS } from '../constants';
-import { Search, MapPin, User, Store } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { Search, MapPin, Store, Eye, MessageCircle } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { optimizeCloudinaryUrl } from '../lib/cloudinary';
+import RatingStars from '../components/RatingStars';
 
 const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'] as const;
 const MENU_ITEMS_FETCH_LIMIT = 400;
@@ -31,9 +31,7 @@ const stringIncludes = (source: unknown, term: string) => {
 };
 
 const normalizeLegacyItems = (value: unknown): string[] => {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item || '').trim()).filter(Boolean);
-  }
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
   return String(value || '')
     .split(/\r?\n|,|•|·|\|/)
     .map((item) => item.trim())
@@ -47,13 +45,9 @@ const resolveItemCategory = (item: MenuItem): 'food' | 'shop' => {
   return normalized.includes('shop') ? 'shop' : 'food';
 };
 
-const normalizePhone = (value?: string) => {
-  return String(value || '').replace(/[^\d]/g, '');
-};
+const normalizePhone = (value?: string) => String(value || '').replace(/[^\d]/g, '');
 
-const getContactNumber = (listing: Listing) => {
-  return String((listing as any).contactNumber || listing.phone || '').trim();
-};
+const getContactNumber = (listing: Listing) => String((listing as any).contactNumber || listing.phone || '').trim();
 
 const getWhatsAppNumber = (listing: Listing) => {
   const raw = String((listing as any).whatsappNumber || (listing as any).whatsapp || getContactNumber(listing) || '').trim();
@@ -75,9 +69,7 @@ const getMapUrl = (listing: Listing) => {
 
   const lat = listing.location?.lat;
   const lng = listing.location?.lng;
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
-    return `https://www.google.com/maps?q=${lat},${lng}`;
-  }
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return `https://www.google.com/maps?q=${lat},${lng}`;
 
   return '';
 };
@@ -101,26 +93,122 @@ const getStructuredItems = (listing: Listing) => {
       }))
       .filter((item: { name: string; price: number }) => item.name && Number.isFinite(item.price));
   }
-
-  const fromMenuItems = Array.isArray((listing as any).menuItems) ? (listing as any).menuItems : [];
-  if (fromMenuItems.length > 0) {
-    return fromMenuItems
-      .map((item: any) => ({
-        name: String(item?.itemName || '').trim(),
-        price: Number(item?.price || 0),
-        description: Array.isArray(item?.servingDetails)
-          ? item.servingDetails.join(', ')
-          : String(item?.servingDetails || '').trim()
-      }))
-      .filter((item: { name: string; price: number }) => item.name && Number.isFinite(item.price));
-  }
-
   return [];
 };
 
+const getPrimaryPrice = (listing: Listing) => {
+  const value = Number((listing as any).pricePerMonth || (listing as any).price || listing.pricePlan || 0);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+function ListingImageCarousel({ listingId, images }: { listingId: string; images: string[] }) {
+  const [index, setIndex] = useState(0);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [listingId]);
+
+  if (images.length === 0) {
+    return <div className="aspect-[16/9] bg-[#161624]" />;
+  }
+
+  const prev = (event?: React.MouseEvent) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    setIndex((current) => (current - 1 + images.length) % images.length);
+  };
+
+  const next = (event?: React.MouseEvent) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+    setIndex((current) => (current + 1) % images.length);
+  };
+
+  return (
+    <div
+      className="relative aspect-[16/9] overflow-hidden group"
+      onTouchStart={(e) => setTouchStartX(e.touches[0]?.clientX ?? null)}
+      onTouchEnd={(e) => {
+        if (touchStartX === null) return;
+        const endX = e.changedTouches[0]?.clientX ?? touchStartX;
+        const diff = endX - touchStartX;
+        if (Math.abs(diff) > 40) {
+          if (diff > 0) prev();
+          else next();
+        }
+        setTouchStartX(null);
+      }}
+    >
+      <div
+        className="flex h-full transition-transform duration-300 ease-in-out"
+        style={{ transform: `translateX(-${index * 100}%)` }}
+      >
+        {images.map((imageUrl, imageIndex) => (
+          <img
+            key={`${imageUrl}-${imageIndex}`}
+            src={imageUrl}
+            alt="Listing"
+            className="listing-image flex-shrink-0 w-full h-full"
+            loading={imageIndex === 0 ? 'eager' : 'lazy'}
+          />
+        ))}
+      </div>
+
+      {images.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={prev}
+            className="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label="Previous image"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={next}
+            className="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/60 text-white items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            aria-label="Next image"
+          >
+            ›
+          </button>
+        </>
+      )}
+
+      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+        {images.map((_, dotIndex) => (
+          <button
+            key={dotIndex}
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIndex(dotIndex);
+            }}
+            className={`w-2 h-2 rounded-full ${dotIndex === index ? 'bg-primary' : 'bg-border'}`}
+            aria-label={`Go to image ${dotIndex + 1}`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const SkeletonCard = () => (
+  <div className="card overflow-hidden p-0">
+    <div className="aspect-[16/9] skeleton-shimmer" />
+    <div className="p-4 space-y-3">
+      <div className="h-4 w-2/3 rounded skeleton-shimmer" />
+      <div className="h-3 w-1/2 rounded skeleton-shimmer" />
+      <div className="h-3 w-3/4 rounded skeleton-shimmer" />
+      <div className="h-9 w-full rounded-xl skeleton-shimmer" />
+    </div>
+  </div>
+);
+
 export default function Home() {
   const navigate = useNavigate();
-  const { profile } = useAuth();
   const { showToast } = useToast();
   const [allListings, setAllListings] = useState<Listing[]>([]);
   const [allMenuItems, setAllMenuItems] = useState<MenuItem[]>([]);
@@ -141,25 +229,23 @@ export default function Home() {
       q,
       (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Listing));
-
         const now = Date.now();
-        const activeRows = rows.filter((l) => {
-          if (!l.active) return false;
-          if (!l.validUntil) return false;
-          const expiry = l.validUntil?.toDate?.()?.getTime?.() || 0;
+        const activeRows = rows.filter((listing) => {
+          if (!listing.active || !listing.validUntil) return false;
+          const expiry = listing.validUntil?.toDate?.()?.getTime?.() || 0;
           return expiry > now;
         });
 
         activeRows.sort((a, b) => {
-          const s = Number(Boolean(b.isSponsored)) - Number(Boolean(a.isSponsored));
-          if (s !== 0) return s;
-          const f = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
-          if (f !== 0) return f;
-          const p = (b.priorityScore || 0) - (a.priorityScore || 0);
-          if (p !== 0) return p;
-          const tA = a.createdAt?.toDate?.()?.getTime?.() || 0;
-          const tB = b.createdAt?.toDate?.()?.getTime?.() || 0;
-          return tB - tA;
+          const sponsorSort = Number(Boolean(b.isSponsored)) - Number(Boolean(a.isSponsored));
+          if (sponsorSort !== 0) return sponsorSort;
+          const featuredSort = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
+          if (featuredSort !== 0) return featuredSort;
+          const prioritySort = (b.priorityScore || 0) - (a.priorityScore || 0);
+          if (prioritySort !== 0) return prioritySort;
+          const createdAtA = a.createdAt?.toDate?.()?.getTime?.() || 0;
+          const createdAtB = b.createdAt?.toDate?.()?.getTime?.() || 0;
+          return createdAtB - createdAtA;
         });
 
         setAllListings(activeRows);
@@ -172,7 +258,7 @@ export default function Home() {
     );
 
     return () => unsub();
-  }, [category, area, showToast]);
+  }, [area, category, showToast]);
 
   useEffect(() => {
     setLoadingMenuItems(true);
@@ -197,16 +283,15 @@ export default function Home() {
 
   const listings = useMemo(() => {
     if (!searchTerm) return allListings;
-
-    return allListings.filter((l) => {
-      const oldFoodItems = normalizeLegacyItems((l as any)?.foodItems);
-      const oldShopItems = normalizeLegacyItems((l as any)?.shopItems);
+    return allListings.filter((listing) => {
+      const oldFoodItems = normalizeLegacyItems((listing as any)?.foodItems);
+      const oldShopItems = normalizeLegacyItems((listing as any)?.shopItems);
 
       return (
-        stringIncludes(l.name, searchTerm) ||
-        stringIncludes(l.area, searchTerm) ||
-        stringIncludes(l.nearCollege, searchTerm) ||
-        stringIncludes((l as any)?.locationCoordinates, searchTerm) ||
+        stringIncludes(listing.name, searchTerm) ||
+        stringIncludes(listing.area, searchTerm) ||
+        stringIncludes(listing.nearCollege, searchTerm) ||
+        stringIncludes((listing as any)?.locationCoordinates, searchTerm) ||
         oldFoodItems.some((item) => stringIncludes(item, searchTerm)) ||
         oldShopItems.some((item) => stringIncludes(item, searchTerm))
       );
@@ -215,14 +300,9 @@ export default function Home() {
 
   const itemResults = useMemo<FoodSearchResult[]>(() => {
     if (!searchTerm) return [];
-
     return allMenuItems
       .filter((item) => String(item.itemName || '').toLowerCase().includes(searchTerm))
-      .filter((item) => {
-        if (area === 'All Areas') return true;
-        const location = String(item.location || '').toLowerCase();
-        return location.includes(area.toLowerCase());
-      })
+      .filter((item) => area === 'All Areas' || String(item.location || '').toLowerCase().includes(area.toLowerCase()))
       .map((item) => ({
         id: String(item.id || `${item.listingId}-${item.itemName}`),
         isItemResult: true,
@@ -241,65 +321,77 @@ export default function Home() {
   }, [itemResults, listings, searchTerm]);
 
   const isLoadingResults = loadingListings || (searchTerm ? loadingMenuItems : false);
-
   const selectedCategoryDescription = category === 'all'
-    ? 'Browse verified student services around Pune'
+    ? 'Discover verified student homes and local essentials in Pune.'
     : (CATEGORY_DESCRIPTIONS[category] || '');
 
   const renderListingCard = (listing: Listing) => {
-    console.log('[Home] listing render', listing);
-    const avgRating = Number(listing.averageRating ?? listing.avgRating ?? 0);
-    const totalRatings = Number(listing.totalRatings || 0);
+    const averageRating = Number(listing.avgRating ?? listing.averageRating ?? 0);
+    const totalRatings = Math.max(0, Number(listing.totalRatings || 0));
     const totalViews = Number(listing.views ?? listing.totalViews ?? 0);
     const availableRooms = Number((listing as any).roomsAvailable ?? (listing as any).availableRooms ?? 0);
-    const showRooms = listing.category === 'pg' || listing.category === 'flat';
+    const showRooms = listing.category === 'pg' || listing.category === 'flat' || listing.category === 'hostel';
     const contactNumber = getContactNumber(listing);
     const whatsappNumber = getWhatsAppNumber(listing);
     const mapUrl = getMapUrl(listing);
     const hasContact = Boolean(normalizePhone(contactNumber));
-    const listingImages = getListingImages(listing);
-    const listingItems = getStructuredItems(listing).slice(0, 4);
+    const listingImages = getListingImages(listing).slice(0, 5);
+    const listingItems = getStructuredItems(listing).slice(0, 3);
     const showItemsPreview = listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop';
-    const allowImageOnCard = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'].includes(String(listing.category));
+    const price = getPrimaryPrice(listing);
+    const imageEnabled = ['pg', 'flat', 'hostel', 'secondhand', 'advertisement'].includes(String(listing.category));
+    const tagLabel = CATEGORY_LABELS[listing.category] || listing.category;
 
     return (
-      <Link key={listing.id} to={`/listing/${listing.id}`} className="block card p-5 border-zinc-800 hover:border-primary/50 shadow-sm transition-colors">
-        {allowImageOnCard && listingImages[0] && (
-          <div className="mb-3 rounded-xl overflow-hidden border border-zinc-800 aspect-[16/10] bg-zinc-900">
-            <img src={listingImages[0]} alt={listing.name} className="w-full h-full object-cover" loading="lazy" />
-          </div>
-        )}
-        <h3 className="font-bold text-xl">{listing.name}</h3>
-        <p className="text-zinc-500 text-xs flex items-center gap-1 mt-2">
-          <MapPin size={12} />
-          {listing.area}
-          {listing.nearCollege ? ` · Near ${listing.nearCollege}` : ''}
-        </p>
-        <div className="mt-3 flex items-center gap-3 text-xs text-zinc-300">
-          <span>{`\u2B50 ${avgRating.toFixed(1)} (${totalRatings || 0})`}</span>
-          <span>{`\u{1F441} ${totalViews || 0}`}</span>
-          {showRooms && <span>{`\u{1F3E0} ${availableRooms || 0} rooms left`}</span>}
-        </div>
-        {showItemsPreview && (
-          <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
-            <p className="text-xs text-zinc-400 mb-2">{listing.category === 'shop' ? 'Items' : 'Food Items'}</p>
-            {listingItems.length === 0 ? (
-              <p className="text-xs text-zinc-500">No items shared yet.</p>
-            ) : (
-              <div className="grid grid-cols-1 gap-2">
-                {listingItems.map((item, index) => (
-                  <div key={`${item.name}-${item.price}-${index}`} className="rounded border border-zinc-800 bg-zinc-950/70 px-2 py-1.5">
-                    <p className="text-sm text-zinc-100">{item.name}</p>
-                    <p className="text-xs text-zinc-300">₹{item.price}</p>
-                    {item.description && <p className="text-[11px] text-zinc-500 mt-0.5">{item.description}</p>}
-                  </div>
-                ))}
-              </div>
+      <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
+        {imageEnabled && listingImages.length > 0 && (
+          <div className="relative rounded-t-2xl overflow-hidden">
+            <ListingImageCarousel listingId={listing.id} images={listingImages} />
+            <span className="absolute top-3 left-3 tag-label px-3 py-1 rounded-full bg-primary/90 text-white">
+              {tagLabel}
+            </span>
+            {price && (
+              <span className="absolute top-3 right-3 px-3 py-1 rounded-full bg-black/75 backdrop-blur text-white text-sm font-bold">
+                ₹{price.toLocaleString('en-IN')}
+              </span>
             )}
           </div>
         )}
-        <div className="mt-4 pt-4 border-t border-zinc-800">
-          <div className="flex items-center gap-2">
+
+        <div className="p-4 border-t border-border">
+          <h3 className="text-lg font-bold leading-tight">{listing.name}</h3>
+          <p className="text-sm text-text-muted flex items-center gap-1 mt-2">
+            <MapPin size={14} />
+            {listing.area}
+            {listing.nearCollege ? ` • Near ${listing.nearCollege}` : ''}
+          </p>
+          <div className="mt-3 flex items-center flex-wrap gap-3 text-sm text-text-muted">
+            <RatingStars avgRating={averageRating} totalRatings={totalRatings} size={14} />
+            <span className="inline-flex items-center gap-1">
+              <Eye size={14} /> {totalViews}
+            </span>
+            {showRooms && <span>{availableRooms || 0} rooms left</span>}
+          </div>
+
+          {showItemsPreview && (
+            <div className="mt-3 rounded-xl bg-[#1A1A28] border border-border p-3">
+              <p className="tag-label text-text-muted mb-2">{listing.category === 'shop' ? 'Shop Items' : 'Food Highlights'}</p>
+              {listingItems.length === 0 ? (
+                <p className="text-sm text-text-muted">No highlights shared yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {listingItems.map((item, index) => (
+                    <div key={`${item.name}-${index}`} className="flex items-center justify-between text-sm">
+                      <span className="text-text">{item.name}</span>
+                      <span className="text-text-muted">₹{item.price}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4 pt-4 border-t border-border grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={!hasContact}
@@ -309,22 +401,22 @@ export default function Home() {
                 if (!hasContact) return;
                 window.location.href = `tel:${normalizePhone(contactNumber)}`;
               }}
-              className="flex-1 px-2 py-2 bg-zinc-900 rounded text-primary text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-outline py-2.5 text-sm rounded-xl"
             >
-              {'\u{1F4DE} Call'}
+              Call
             </button>
             <button
               type="button"
-              disabled={!hasContact}
+              disabled={!hasContact || !whatsappNumber}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 if (!hasContact || !whatsappNumber) return;
                 window.open(`https://wa.me/${whatsappNumber}`, '_blank', 'noopener,noreferrer');
               }}
-              className="flex-1 px-2 py-2 bg-zinc-900 rounded text-primary text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary py-2.5 text-sm rounded-xl inline-flex items-center justify-center gap-1.5"
             >
-              {'\u{1F4AC} WhatsApp'}
+              <MessageCircle size={15} /> WhatsApp
             </button>
             {mapUrl && (
               <button
@@ -334,9 +426,9 @@ export default function Home() {
                   e.stopPropagation();
                   window.open(mapUrl, '_blank', 'noopener,noreferrer');
                 }}
-                className="flex-1 px-2 py-2 bg-zinc-900 rounded text-primary text-xs font-semibold"
+                className="col-span-2 btn-outline py-2.5 text-sm rounded-xl"
               >
-                {'\u{1F4CD} Map'}
+                View on Map
               </button>
             )}
           </div>
@@ -346,105 +438,104 @@ export default function Home() {
   };
 
   const renderItemCard = (item: FoodSearchResult) => {
-    const icon = item.itemCategory === 'shop' ? '\u{1F6D2}' : '\u{1F35B}';
+    const icon = item.itemCategory === 'shop' ? '🛍️' : '🍽️';
     const content = (
-      <div className="card p-4 border-zinc-800">
-        <p className="font-semibold text-sm">{`${icon} ${item.itemName} - \u20B9${item.price || 0}`}</p>
-        <p className="text-xs text-zinc-400 mt-1">{item.listingName}</p>
-        <p className="text-xs text-zinc-500 mt-0.5">{item.location}</p>
+      <div className="card card-hover">
+        <p className="font-semibold text-sm">{`${icon} ${item.itemName}`}</p>
+        <p className="text-sm text-text mt-1">₹{item.price || 0}</p>
+        <p className="text-xs text-text-muted mt-1">{item.listingName}</p>
+        <p className="text-xs text-text-muted">{item.location}</p>
       </div>
     );
-
     if (!item.listingId) return <div key={item.id}>{content}</div>;
-
-    return (
-      <Link key={item.id} to={`/listing/${item.listingId}`} className="block hover:opacity-95 transition-opacity">
-        {content}
-      </Link>
-    );
+    return <Link key={item.id} to={`/listing/${item.listingId}`}>{content}</Link>;
   };
 
   return (
-    <div className="min-h-screen pb-28">
-      <header className="sticky top-0 z-20 bg-background/90 backdrop-blur border-b border-zinc-800 px-6 py-4 flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold text-primary">CampaNest Pune</h1>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Student Marketplace</p>
-        </div>
-        <Link to="/about" className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center">
-          {profile?.name?.[0] || <User size={18} />}
-        </Link>
-      </header>
+    <div className="min-h-screen pb-32">
+      <section className="hero-gradient border-b border-border">
+        <div className="max-w-7xl mx-auto px-5 sm:px-6 py-16 md:py-24 text-center">
+          <p className="tag-label text-primary">Trusted Student Real Estate</p>
+          <h1 className="mt-4 text-4xl md:text-5xl font-bold max-w-3xl mx-auto">Find Verified Student Homes & Local Services in Pune</h1>
+          <p className="mt-4 text-text-muted max-w-2xl mx-auto">Premium dark-mode marketplace experience with verified contacts, transparent ratings, and safer browsing.</p>
 
-      <div className="px-6 mt-5">
-        <div className="relative">
-          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-          <input
-            className="input-field pl-10"
-            placeholder="Search listings, food, or shop items"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <div className="px-6 mt-4 flex gap-2 overflow-x-auto no-scrollbar pb-2">
-        <button
-          onClick={() => navigate('/emergency')}
-          className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase bg-red-600/90 text-white border border-red-400/30"
-        >
-          {'\u{1F6A8} Emergency'}
-        </button>
-        {CATEGORIES.map((c) => (
-          <button
-            key={c}
-            onClick={() => setCategory(c)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase ${category === c ? 'bg-primary text-white' : 'bg-zinc-900 text-zinc-400'}`}
-          >
-            {c === 'all' ? 'All' : (CATEGORY_LABELS[c] || c)}
-          </button>
-        ))}
-      </div>
-
-      <div className="px-6 mt-2 flex gap-2 overflow-x-auto no-scrollbar pb-2">
-        {['All Areas', ...AREAS].map((a) => (
-          <button
-            key={a}
-            onClick={() => setArea(a)}
-            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase ${area === a ? 'bg-accent text-white' : 'bg-zinc-900 text-zinc-500'}`}
-          >
-            {a}
-          </button>
-        ))}
-      </div>
-      <div className="px-6 mt-1">
-        <p className="text-xs text-zinc-500">{selectedCategoryDescription}</p>
-      </div>
-
-      <div className="px-6 mt-6 space-y-4">
-        {isLoadingResults ? (
-          <p className="text-zinc-500">Loading listings...</p>
-        ) : mergedResults.length === 0 ? (
-          <div className="card bg-zinc-900/50 border-dashed border-zinc-800 py-12 text-center text-zinc-500">
-            No listings found.
+          <div className="mt-8 max-w-2xl mx-auto relative">
+            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input
+              className="input-field pl-11 py-4 rounded-2xl"
+              placeholder="Search PG, flats, food, shop items, and areas..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
           </div>
-        ) : (
-          mergedResults.map((result) => {
-            if ((result as FoodSearchResult).isItemResult) {
-              return renderItemCard(result as FoodSearchResult);
-            }
-            return renderListingCard(result as Listing);
-          })
-        )}
-      </div>
+        </div>
+      </section>
 
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] p-4 bg-background/90 backdrop-blur border-t border-zinc-800 z-30">
+      <section className="max-w-7xl mx-auto px-5 sm:px-6 mt-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => navigate('/emergency')}
+            className="px-4 py-2 rounded-full text-xs font-medium uppercase tracking-[0.08em] bg-warning/20 text-warning border border-warning/40"
+          >
+            Emergency
+          </button>
+          {CATEGORIES.map((item) => (
+            <button
+              key={item}
+              onClick={() => setCategory(item)}
+              className={`px-4 py-2 rounded-full text-xs font-medium uppercase tracking-[0.08em] border transition-colors ${
+                category === item
+                  ? 'bg-primary text-white border-primary'
+                  : 'bg-surface text-text-muted border-border hover:border-primary hover:text-text'
+              }`}
+            >
+              {item === 'all' ? 'All' : (CATEGORY_LABELS[item] || item)}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {['All Areas', ...AREAS].map((areaItem) => (
+            <button
+              key={areaItem}
+              onClick={() => setArea(areaItem)}
+              className={`px-3.5 py-2 rounded-full text-[11px] tag-label border transition-colors ${
+                area === areaItem
+                  ? 'bg-[#1A1A28] text-text border-primary'
+                  : 'bg-surface text-text-muted border-border hover:border-primary hover:text-text'
+              }`}
+            >
+              {areaItem}
+            </button>
+          ))}
+        </div>
+        <p className="mt-4 text-sm text-text-muted">{selectedCategoryDescription}</p>
+      </section>
+
+      <section className="max-w-7xl mx-auto px-5 sm:px-6 mt-6">
+        {isLoadingResults ? (
+          <div className="listing-grid">
+            {Array.from({ length: 6 }).map((_, index) => <SkeletonCard key={index} />)}
+          </div>
+        ) : mergedResults.length === 0 ? (
+          <div className="card py-14 text-center text-text-muted">No listings found for this filter.</div>
+        ) : (
+          <div className="listing-grid">
+            {mergedResults.map((result) => {
+              if ((result as FoodSearchResult).isItemResult) return renderItemCard(result as FoodSearchResult);
+              return renderListingCard(result as Listing);
+            })}
+          </div>
+        )}
+      </section>
+
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-24px)] md:w-auto z-30">
         <a
           href={`https://wa.me/917385670673?text=${encodeURIComponent('Hi, I want to list my service on CampaNest Pune')}`}
-          className="btn-primary w-full flex items-center justify-center gap-2"
+          className="btn-primary inline-flex items-center justify-center gap-2 px-6 py-3 shadow-xl"
         >
           <Store size={18} />
-          {'\u{1F3EA} List Your Service'}
+          List Your Service
         </a>
       </div>
     </div>

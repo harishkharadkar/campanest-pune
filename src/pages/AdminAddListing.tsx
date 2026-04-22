@@ -2,20 +2,31 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { addDays } from 'date-fns';
-import { ChevronLeft, Upload, X } from 'lucide-react';
+import { Camera, ChevronLeft, GripVertical, RefreshCcw, Upload, X } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
 import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
 import { Listing, ListingCategory, ListingPlanType, MenuItem } from '../types';
-import { optimizeCloudinaryUrl, uploadImage } from '../lib/cloudinary';
+import { getOptimizedUrl, optimizeCloudinaryUrl, uploadToCloudinary } from '../lib/cloudinary';
 
 const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
 ];
-const MULTI_IMAGE_CATEGORIES: ListingCategory[] = ['pg', 'flat', 'hostel'];
-const SINGLE_IMAGE_CATEGORIES: ListingCategory[] = ['secondhand', 'advertisement'];
 const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
+const MIN_PHOTOS = 4;
+const MAX_PHOTOS = 5;
+
+type UploadStatus = 'uploading' | 'uploaded' | 'error';
+type UploadItem = {
+  id: string;
+  file?: File;
+  previewUrl: string;
+  progress: number;
+  status: UploadStatus;
+  uploadedUrl?: string;
+  error?: string;
+};
 
 type LocalMenuItem = {
   itemName: string;
@@ -90,7 +101,19 @@ const getListingImages = (listing?: Partial<Listing> | null) => {
   if (!listing) return [] as string[];
   const fromImages = Array.isArray((listing as any).images) ? ((listing as any).images as string[]) : [];
   const fromPhotos = Array.isArray((listing as any).photos) ? ((listing as any).photos as string[]) : [];
-  return [...fromImages, ...fromPhotos].map((url) => optimizeCloudinaryUrl(String(url || ''))).filter(Boolean);
+  return [...fromImages, ...fromPhotos].map((url) => String(url || '').trim()).filter(Boolean);
+};
+
+const createUploadItemId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+const toUploadItemsFromUrls = (urls: string[]): UploadItem[] => {
+  return urls.slice(0, MAX_PHOTOS).map((url) => ({
+    id: createUploadItemId(),
+    previewUrl: getOptimizedUrl(url, 'thumb') || url,
+    progress: 100,
+    status: 'uploaded',
+    uploadedUrl: url
+  }));
 };
 
 export default function AdminAddListing() {
@@ -101,7 +124,9 @@ export default function AdminAddListing() {
   const editId = (searchParams.get('id') || '').trim();
   const isEditMode = Boolean(editId);
 
-  const [photos, setPhotos] = useState<File[]>([]);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadingListing, setLoadingListing] = useState(false);
   const [category, setCategory] = useState<ListingCategory>('mess');
@@ -121,6 +146,7 @@ export default function AdminAddListing() {
         setCategory('mess');
         setAdDuration(7);
         setMenuItems([]);
+        setUploadItems([]);
         setFormVersion((prev) => prev + 1);
         return;
       }
@@ -138,6 +164,7 @@ export default function AdminAddListing() {
 
         const data = snap.data() as Partial<Listing>;
         setInitialListing(data);
+        setUploadItems(toUploadItemsFromUrls(getListingImages(data)));
         const inlineMenuItems = normalizeMenuItems((data.menuItems as Partial<MenuItem>[]) || []);
         setMenuItems(inlineMenuItems);
 
@@ -172,26 +199,135 @@ export default function AdminAddListing() {
     };
   }, [editId, isEditMode, navigate, showToast]);
 
-  const onPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!allowsImages) return;
-    if (!e.target.files) return;
-    const incoming = Array.from(e.target.files as FileList) as File[];
-    console.log('[AdminAddListing] file selected', incoming.map((file: File) => ({
+  useEffect(() => {
+    return () => {
+      uploadItems.forEach((item) => {
+        if (item.file && item.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
+    };
+  }, [uploadItems]);
+
+  const uploadSingleFile = async (itemId: string, file: File) => {
+    try {
+      const uploadedUrl = await uploadToCloudinary(file, (progress) => {
+        setUploadItems((prev) => prev.map((item) => (
+          item.id === itemId ? { ...item, progress } : item
+        )));
+      });
+
+      setUploadItems((prev) => prev.map((item) => (
+        item.id === itemId
+          ? {
+              ...item,
+              status: 'uploaded',
+              progress: 100,
+              uploadedUrl,
+              previewUrl: getOptimizedUrl(uploadedUrl, 'thumb') || uploadedUrl,
+              error: undefined
+            }
+          : item
+      )));
+
+      return true;
+    } catch (error: any) {
+      setUploadItems((prev) => prev.map((item) => (
+        item.id === itemId
+          ? {
+              ...item,
+              status: 'error',
+              progress: 0,
+              error: String(error?.message || 'Upload failed')
+            }
+          : item
+      )));
+      return false;
+    }
+  };
+
+  const handleIncomingFiles = async (incomingFiles: File[]) => {
+    const validFiles = incomingFiles.filter((file) => file.type.startsWith('image/'));
+    if (validFiles.length === 0) return;
+
+    if (uploadItems.length + validFiles.length > MAX_PHOTOS) {
+      showToast('Maximum 5 images allowed per listing', 'error');
+      return;
+    }
+
+    const queuedItems: UploadItem[] = validFiles.map((file) => ({
+      id: createUploadItemId(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      progress: 0,
+      status: 'uploading'
+    }));
+
+    console.log('[AdminAddListing] file selected', validFiles.map((file) => ({
       name: file.name,
       size: file.size,
       type: file.type
     })));
-    setPhotos((prev) => [...prev, ...incoming].slice(0, photoLimit));
+
+    setUploadItems((prev) => [...prev, ...queuedItems]);
+
+    const uploadResults = await Promise.all(queuedItems.map((item) => uploadSingleFile(item.id, item.file as File)));
+    if (uploadResults.every(Boolean)) {
+      showToast('Images uploaded successfully', 'success');
+    } else {
+      showToast('Some uploads failed. Use retry button.', 'error');
+    }
+  };
+
+  const onPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    await handleIncomingFiles(Array.from(e.target.files as FileList));
+    e.target.value = '';
+  };
+
+  const retryUpload = async (itemId: string) => {
+    const target = uploadItems.find((item) => item.id === itemId);
+    if (!target?.file) return;
+
+    setUploadItems((prev) => prev.map((item) => (
+      item.id === itemId ? { ...item, status: 'uploading', progress: 0, error: undefined } : item
+    )));
+
+    const ok = await uploadSingleFile(itemId, target.file);
+    if (ok) showToast('Images uploaded successfully', 'success');
+    else showToast('Upload failed. Use retry button.', 'error');
   };
 
   const removePhoto = (index: number) => {
-    setPhotos((prev) => prev.filter((_, i) => i !== index));
+    setUploadItems((prev) => {
+      const target = prev[index];
+      if (target?.file && target.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
-  const allowsMultipleImages = MULTI_IMAGE_CATEGORIES.includes(category);
-  const allowsSingleImage = SINGLE_IMAGE_CATEGORIES.includes(category);
-  const allowsImages = allowsMultipleImages || allowsSingleImage;
-  const photoLimit = allowsSingleImage ? 1 : 5;
+  const onDropFiles = async (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    const incoming = Array.from(event.dataTransfer.files || []);
+    await handleIncomingFiles(incoming);
+  };
+
+  const onDragStartPhoto = (index: number) => setDraggedIndex(index);
+  const onDropPhoto = (index: number) => {
+    if (draggedIndex === null || draggedIndex === index) return;
+    setUploadItems((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(draggedIndex, 1);
+      next.splice(index, 0, moved);
+      return next;
+    });
+    setDraggedIndex(null);
+  };
+
+  const allowsImages = true;
 
   const addMenuItem = (item: DraftMenuItem) => {
     setMenuItems((prev) => [
@@ -225,19 +361,25 @@ export default function AdminAddListing() {
 
       const parsedLocation = parseLocationCoordinates(getText('locationCoordinates'));
       const closedTillRaw = getText('closedTill');
-
-      const photoUrls: string[] = [];
-      if (allowsImages && photos.length > 0) {
-        for (const photo of photos.slice(0, photoLimit)) {
-          const url = await uploadImage(photo);
-          if (url) photoUrls.push(optimizeCloudinaryUrl(url));
-        }
+      const hasUploading = uploadItems.some((item) => item.status === 'uploading');
+      if (hasUploading) {
+        showToast('Please wait for image uploads to complete', 'info');
+        setSaving(false);
+        return;
       }
 
-      const existingImages = getListingImages(initialListing);
-      const finalImages = allowsImages
-        ? (photoUrls.length > 0 ? photoUrls : existingImages).slice(0, photoLimit)
-        : [];
+      const uploadedUrls = uploadItems
+        .filter((item) => item.status === 'uploaded' && item.uploadedUrl)
+        .map((item) => String(item.uploadedUrl))
+        .slice(0, MAX_PHOTOS);
+
+      if (allowsImages && uploadedUrls.length < MIN_PHOTOS) {
+        showToast('Please upload at least 4 images', 'info');
+        setSaving(false);
+        return;
+      }
+
+      const finalImages = uploadedUrls;
       const plan = buildPlan(category, adDuration);
       const durationDefault = isEditMode ? Number(initialListing?.duration || plan.duration) : 30;
       const duration = getNum('duration', durationDefault);
@@ -398,21 +540,13 @@ export default function AdminAddListing() {
         listing.itemName = getText('itemName');
         listing.price = getNum('itemPrice');
         listing.condition = getText('condition').toLowerCase() || 'used';
-        listing.image = (photoUrls[0] || existingImages[0] || '').trim();
-        if (listing.image) {
-          listing.images = [listing.image];
-          listing.photos = [listing.image];
-        }
+        listing.image = String(finalImages[0] || '').trim();
       }
 
       if (category === 'advertisement') {
         listing.title = getText('title');
-        listing.bannerImage = (photoUrls[0] || String(initialListing?.bannerImage || '') || existingImages[0] || '').trim();
+        listing.bannerImage = String(finalImages[0] || '').trim();
         listing.image = listing.bannerImage;
-        if (listing.bannerImage) {
-          listing.images = [listing.bannerImage];
-          listing.photos = [listing.bannerImage];
-        }
       }
 
       if (category === 'doctor') {

@@ -1,51 +1,90 @@
-export const optimizeCloudinaryUrl = (url?: string) => {
+import imageCompression from 'browser-image-compression';
+
+type OptimizationType = 'thumb' | 'detail';
+
+const CLOUD_NAME = String(import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || '').trim();
+const UPLOAD_PRESET = String(import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || '').trim();
+const FALLBACK_CLOUD_NAME = 'ddyljqef3';
+const FALLBACK_UPLOAD_PRESET = 'campanest_upload';
+
+const getCloudName = () => CLOUD_NAME || FALLBACK_CLOUD_NAME;
+const getUploadPreset = () => UPLOAD_PRESET || FALLBACK_UPLOAD_PRESET;
+
+const getUploadEndpoint = () => `https://api.cloudinary.com/v1_1/${getCloudName()}/image/upload`;
+
+export const getOptimizedUrl = (url?: string, type: OptimizationType = 'detail') => {
   const raw = String(url || '').trim();
-  if (!raw) return '';
-  if (!raw.includes('res.cloudinary.com') || raw.includes('/upload/f_auto,q_auto')) {
-    return raw;
-  }
-  return raw.replace('/upload/', '/upload/f_auto,q_auto/');
+  if (!raw || !raw.includes('res.cloudinary.com') || !raw.includes('/upload/')) return raw;
+
+  const transformation = type === 'thumb'
+    ? 'c_fill,w_600,h_400,q_auto,f_auto'
+    : 'q_auto,f_auto';
+
+  if (raw.includes(`/upload/${transformation}/`)) return raw;
+
+  return raw.replace('/upload/', `/upload/${transformation}/`);
 };
 
-export const uploadImage = async (file: File) => {
+export const optimizeCloudinaryUrl = (url?: string, type: OptimizationType = 'detail') => getOptimizedUrl(url, type);
+
+type UploadProgressCallback = (progress: number) => void;
+
+export const uploadToCloudinary = async (file: File, onProgress?: UploadProgressCallback) => {
+  if (!file) throw new Error('No file selected');
+
   console.log('[Cloudinary] file selected', {
-    name: file?.name,
-    size: file?.size,
-    type: file?.type
+    name: file.name,
+    size: file.size,
+    type: file.type
   });
 
-  if (!file) {
-    alert('Please select an image file.');
-    throw new Error('No file selected');
-  }
+  const compressed = await imageCompression(file, {
+    maxSizeMB: 0.3,
+    maxWidthOrHeight: 1280,
+    useWebWorker: true,
+  });
 
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', 'campanest_upload');
+  formData.append('file', compressed);
+  formData.append('upload_preset', getUploadPreset());
 
-  console.log('[Cloudinary] upload started', {
-    endpoint: 'https://api.cloudinary.com/v1_1/ddyljqef3/image/upload',
-    preset: 'campanest_upload'
+  const endpoint = getUploadEndpoint();
+  console.log('[Cloudinary] upload started', { endpoint, preset: getUploadPreset() });
+
+  const secureUrl = await new Promise<string>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', endpoint);
+
+    xhr.upload.onprogress = (event) => {
+      if (!onProgress || !event.lengthComputable) return;
+      const pct = Math.min(100, Math.round((event.loaded / event.total) * 100));
+      onProgress(pct);
+    };
+
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = JSON.parse(xhr.responseText || '{}');
+      } catch {
+        data = {};
+      }
+
+      console.log('[Cloudinary] upload response received', data);
+
+      const url = String(data?.secure_url || '').trim();
+      if (xhr.status >= 200 && xhr.status < 300 && url) {
+        onProgress?.(100);
+        resolve(url);
+      } else {
+        reject(new Error(String(data?.error?.message || 'Upload failed')));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(formData);
   });
-
-  const res = await fetch('https://api.cloudinary.com/v1_1/ddyljqef3/image/upload', {
-    method: 'POST',
-    body: formData
-  });
-
-  const data = await res.json().catch(() => ({}));
-  console.log('[Cloudinary] upload response received', data);
-
-  if (!res.ok) {
-    alert('Image upload failed. Please try again.');
-    throw new Error(String((data as any)?.error?.message || 'Image upload failed'));
-  }
-
-  const secureUrl = String((data as any)?.secure_url || '').trim();
-  if (!secureUrl) {
-    alert('Image upload failed. Cloudinary did not return secure_url.');
-    throw new Error('Cloudinary secure_url missing');
-  }
 
   return secureUrl;
 };
+
+export const uploadImage = uploadToCloudinary;

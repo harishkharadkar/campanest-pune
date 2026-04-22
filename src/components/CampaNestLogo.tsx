@@ -9,8 +9,8 @@ export default function CampaNestLogo({
   size = 80,
   variant = 'icon'
 }: CampaNestLogoProps) {
-  const shieldPath = 'M22 18 H78 V55 C78 69 66.5 79.5 52 87 C50.8 87.6 49.2 87.6 48 87 C33.5 79.5 22 69 22 55 Z';
-  const cArcPath = 'M62 36 A20 20 0 1 1 62 58';
+  const shieldPath = 'M24 19 Q50 14 76 19 L72 58 Q68 74 50 84 Q32 74 28 58 Z';
+  const cArcPath = 'M61.5 35 A18 18 0 1 1 61.5 58';
 
   const icon = (
     <svg width={size} height={size} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-label="CampaNest logo icon">
@@ -18,20 +18,20 @@ export default function CampaNestLogo({
       <path
         d={cArcPath}
         fill="none"
-        stroke="#1C1C1C"
-        strokeWidth="13.5"
+        stroke="#000000"
+        strokeWidth="15"
         strokeLinecap="round"
       />
-      <circle cx="78" cy="18" r="12" fill="#00BFA5" />
+      <circle cx="72.5" cy="25.5" r="12.5" fill="#1ABC9C" />
       <text
-        x="78"
-        y="18"
+        x="72.5"
+        y="25.5"
         textAnchor="middle"
         dominantBaseline="middle"
-        fontSize="13"
-        fontWeight="800"
+        fontSize="12"
+        fontWeight="600"
         fontFamily="Poppins, Nunito, sans-serif"
-        fill="#1A1A1A"
+        fill="#000000"
       >
         P
       </text>
@@ -45,30 +45,30 @@ export default function CampaNestLogo({
         <h1
           className="mt-5 leading-none text-[#FF7A00]"
           style={{
-            fontFamily: 'Poppins, Nunito, sans-serif',
+            fontFamily: 'Poppins, Montserrat, Inter, Nunito, sans-serif',
             fontSize: '64px',
             fontWeight: 800,
-            letterSpacing: 0
+            letterSpacing: '-0.02em'
           }}
         >
           CampaNest
         </h1>
         <p
-          className="mt-1 uppercase leading-none text-[#00BFA5]"
+          className="mt-2 uppercase leading-none text-[#1ABC9C]"
           style={{
-            fontFamily: 'Poppins, Nunito, sans-serif',
-            fontSize: '18px',
-            fontWeight: 700,
+            fontFamily: 'Poppins, Montserrat, Inter, Nunito, sans-serif',
+            fontSize: '15px',
+            fontWeight: 500,
             letterSpacing: '0.18em'
           }}
         >
           PUNE
         </p>
         <p
-          className="mt-3 text-[#7A7A8C]"
+          className="mt-4 text-[#9CA3AF]"
           style={{
-            fontFamily: 'Poppins, Nunito, sans-serif',
-            fontSize: '20px',
+            fontFamily: 'Poppins, Montserrat, Inter, Nunito, sans-serif',
+            fontSize: '11px',
             fontWeight: 400,
             letterSpacing: 0
           }}

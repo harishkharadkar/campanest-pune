@@ -58,10 +58,10 @@ const SiteChrome = ({ children }: { children: React.ReactNode }) => {
               <span
                 className="hidden md:inline leading-none text-[#FF7A00]"
                 style={{
-                  fontFamily: 'Poppins, Nunito, sans-serif',
+                  fontFamily: 'Poppins, Montserrat, Inter, Nunito, sans-serif',
                   fontSize: '30px',
                   fontWeight: 800,
-                  letterSpacing: 0
+                  letterSpacing: '-0.02em'
                 }}
               >
                 CampaNest

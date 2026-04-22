@@ -26,13 +26,13 @@ export default function SplashScreen() {
   }, [loading, user, navigate]);
 
   return (
-    <div className="h-screen flex flex-col items-center justify-center bg-background">
+    <div className="h-screen flex flex-col items-center justify-center bg-[#1A1A1A]">
       <motion.div
         initial={{ scale: 0.5, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
       >
-        <CampaNestLogo size={128} variant="full" />
+        <CampaNestLogo size={210} variant="full" />
       </motion.div>
     </div>
   );

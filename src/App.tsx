@@ -55,7 +55,17 @@ const SiteChrome = ({ children }: { children: React.ReactNode }) => {
           <div className="max-w-7xl mx-auto px-5 sm:px-6 py-3 flex items-center justify-between gap-4">
             <Link to="/home" className="flex items-center gap-3">
               <CampaNestLogo size={34} />
-              <span className="hidden md:inline text-lg font-extrabold text-[#FF7A00] leading-none">CampaNest</span>
+              <span
+                className="hidden md:inline leading-none text-[#FF7A00]"
+                style={{
+                  fontFamily: 'Poppins, Nunito, sans-serif',
+                  fontSize: '30px',
+                  fontWeight: 800,
+                  letterSpacing: 0
+                }}
+              >
+                CampaNest
+              </span>
             </Link>
             <nav className="hidden md:flex items-center gap-6">
               <Link className="nav-link" to="/home">Buy/Rent</Link>

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addDoc, collection, deleteField, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { addDays } from 'date-fns';
-import { Camera, ChevronLeft } from 'lucide-react';
+import { Camera } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
@@ -14,6 +14,23 @@ const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'
 ];
 const SERVICE_TYPES: ServiceType[] = [...CATEGORIES, 'blockrent', 'avashyakta', 'newopening'];
+const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+  pg: 'PG',
+  hostel: 'Hostel',
+  flat: 'Flat',
+  mess: 'Mess',
+  shop: 'Shop',
+  hotel: 'Hotel',
+  block: 'Block Renting',
+  doctor: 'Doctor',
+  requirement: 'Requirement',
+  secondhand: 'Second Hand Items',
+  advertisement: 'Advertisement',
+  billboard: 'Billboard',
+  blockrent: 'Block Rent',
+  avashyakta: 'Avashyakta',
+  newopening: 'New Opening'
+};
 const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
 const MAX_PHOTOS = 5;
 const IMAGE_INPUT_LABELS = ['Image 1 (Main)', 'Image 2', 'Image 3', 'Image 4', 'Image 5'];
@@ -215,7 +232,7 @@ export default function AdminAddListing() {
         const snap = await getDoc(doc(db, 'listings', editId));
         if (!snap.exists()) {
           showToast('Listing not found', 'error');
-          navigate('/admin');
+          navigate('/admin/listings');
           return;
         }
 
@@ -526,13 +543,15 @@ export default function AdminAddListing() {
 
       if (category === 'billboard') {
         const billboardLocation = getText('billboardLocation') || getText('address');
+        const exactAddress = getText('exactAddress') || billboardLocation;
         const contactNumber = getText('contactNumber') || getText('phone');
         const whatsappNumber = getText('whatsappNumber') || getText('whatsapp');
         const pricePerMonth = getNum('pricePerMonth', Number((initialListing as any)?.pricePerMonth || 0));
         listing.serviceType = 'billboard';
         listing.name = getText('name') || billboardLocation || listing.name;
         listing.location = billboardLocation;
-        listing.address = billboardLocation;
+        listing.address = exactAddress;
+        listing.nearLandmark = getText('nearLandmark');
         listing.trafficLevel = getText('trafficLevel') || 'Medium';
         listing.size = getText('size');
         listing.pricePerMonth = pricePerMonth;
@@ -617,7 +636,7 @@ export default function AdminAddListing() {
       }
 
       showToast(isEditMode ? 'Listing updated successfully' : 'Listing added successfully', 'success');
-      navigate('/admin');
+      navigate('/admin/listings');
     } catch (error: any) {
       showToast(isEditMode ? 'Failed to update listing' : (error?.message || 'Failed to save listing'), 'error');
     } finally {
@@ -631,7 +650,14 @@ export default function AdminAddListing() {
   return (
     <div className="min-h-screen pb-24">
       <div className="sticky top-0 bg-background z-10 px-4 py-4 border-b border-zinc-800 flex items-center gap-4">
-        <button onClick={() => navigate(-1)}><ChevronLeft /></button>
+        <button
+          type="button"
+          onClick={() => navigate('/admin/listings')}
+          className="text-[#FF7A00] text-sm font-medium inline-flex items-center gap-1"
+        >
+          <span aria-hidden="true">←</span>
+          <span>Back to Listings</span>
+        </button>
         <h1 className="font-bold text-lg">{isEditMode ? 'Edit Listing (Admin)' : 'Add Listing (Admin)'}</h1>
       </div>
 
@@ -652,7 +678,7 @@ export default function AdminAddListing() {
             </select>
             <select name="serviceType" className="input-field" defaultValue={String((initialListing as any)?.serviceType || initialListing?.category || category)}>
               {SERVICE_TYPES.map((serviceType) => (
-                <option key={serviceType} value={serviceType}>{serviceType}</option>
+                <option key={serviceType} value={serviceType}>{SERVICE_TYPE_LABELS[serviceType]}</option>
               ))}
             </select>
             <select name="area" className="input-field" defaultValue={initialListing?.area || ''} required>
@@ -854,6 +880,19 @@ export default function AdminAddListing() {
                 className="input-field"
                 defaultValue={typeof (initialListing as any)?.location === 'string' ? (initialListing as any).location : (initialListing?.address || '')}
                 required
+              />
+              <input
+                name="exactAddress"
+                placeholder="Exact Address"
+                className="input-field"
+                defaultValue={String(initialListing?.address || '')}
+                required
+              />
+              <input
+                name="nearLandmark"
+                placeholder="Near Landmark"
+                className="input-field"
+                defaultValue={String((initialListing as any)?.nearLandmark || initialListing?.landmark || '')}
               />
               <select name="trafficLevel" className="input-field" defaultValue={String((initialListing as any)?.trafficLevel || 'Medium')} required>
                 <option value="Very High">Very High</option>

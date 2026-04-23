@@ -10,7 +10,7 @@ import { getOptimizedUrl } from '../lib/cloudinary';
 import { getListingPhotos } from '../lib/listingPhotos';
 import RatingStars from '../components/RatingStars';
 
-const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'] as const;
+const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'advertisement', 'billboard', 'secondhand'] as const;
 const MENU_ITEMS_FETCH_LIMIT = 400;
 
 type FoodSearchResult = {
@@ -240,6 +240,7 @@ export default function Home() {
 
   const renderListingCard = (listing: Listing) => {
     const isBillboard = listing.category === 'billboard' || String((listing as any).serviceType || '').toLowerCase() === 'billboard';
+    const isAdvertisement = listing.category === 'advertisement' || String((listing as any).serviceType || '').toLowerCase() === 'advertisement';
     const averageRating = Number(listing.avgRating ?? listing.averageRating ?? 0);
     const totalRatings = Math.max(0, Number(listing.totalRatings || 0));
     const totalViews = Number(listing.views ?? listing.totalViews ?? 0);
@@ -257,6 +258,9 @@ export default function Home() {
     const tagLabel = CATEGORY_LABELS[listing.category] || listing.category;
     const trafficLevel = String((listing as any).trafficLevel || 'Medium');
     const billboardLocation = String((listing as any).location || listing.address || listing.name || '').trim();
+    const billboardSize = String((listing as any).size || '').trim();
+    const adTitle = String((listing as any).title || listing.name || '').trim();
+    const adDescription = String(listing.description || '').trim();
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
@@ -298,16 +302,30 @@ export default function Home() {
         </div>
 
         <div className="p-4 border-t border-border">
-          <h3 className="text-lg font-bold leading-tight">{isBillboard && billboardLocation ? billboardLocation : listing.name}</h3>
+          <h3 className="text-lg font-bold leading-tight">
+            {isBillboard && billboardLocation
+              ? billboardLocation
+              : isAdvertisement && adTitle
+                ? adTitle
+                : listing.name}
+          </h3>
           <p className="text-sm text-text-muted flex items-center gap-1 mt-2">
             <MapPin size={14} />
             {listing.area}
             {listing.nearCollege ? ` • Near ${listing.nearCollege}` : ''}
           </p>
+          {isAdvertisement && adDescription && (
+            <p className="mt-2 text-sm text-text-muted line-clamp-2">{adDescription}</p>
+          )}
           {isBillboard && (
             <div className="mt-3 flex items-center flex-wrap gap-2">
               <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border border-border bg-surface-elevated text-text">{listing.area}</span>
               <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${getTrafficBadgeClass(trafficLevel)}`}>{trafficLevel}</span>
+              {billboardSize && (
+                <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border border-border bg-surface-elevated text-text">
+                  {billboardSize}
+                </span>
+              )}
             </div>
           )}
           <div className="mt-3 flex items-center flex-wrap gap-3 text-sm text-text-muted">

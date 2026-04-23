@@ -86,6 +86,7 @@ export interface Listing {
   nearCollege?: string;
   address?: string;
   landmark?: string;
+  nearLandmark?: string;
   mapsLink?: string;
   location?: {
     lat: number;

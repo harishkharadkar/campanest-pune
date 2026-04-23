@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, increment, limit, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { Listing, MenuItem } from '../types';
-import { Camera, ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send, Star } from 'lucide-react';
+import { Camera, ChevronLeft, Copy, Eye, MapPin, MessageCircle, Navigation, Phone, Send } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import RatingStars from '../components/RatingStars';
 import { CATEGORY_LABELS } from '../constants';
@@ -121,7 +121,7 @@ export default function ListingDetail() {
   const { id } = useParams<{ id: string }>();
   const listingId = (id || '').trim();
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const { showToast } = useToast();
 
   const [listing, setListing] = useState<Listing | null>(null);
@@ -129,6 +129,8 @@ export default function ListingDetail() {
   const [loadingMenuItems, setLoadingMenuItems] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userRating, setUserRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [hasRated, setHasRated] = useState(false);
   const [submittingRating, setSubmittingRating] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -206,12 +208,16 @@ export default function ListingDetail() {
             const existingRatingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
             const existingRatingSnap = await getDoc(existingRatingRef);
             const value = Number(existingRatingSnap.data()?.rating || 0);
-            setUserRating(value >= 1 && value <= 5 ? value : 0);
+            const nextRating = value >= 1 && value <= 5 ? value : 0;
+            setUserRating(nextRating);
+            setHasRated(nextRating > 0);
           } catch {
             setUserRating(0);
+            setHasRated(false);
           }
         } else {
           setUserRating(0);
+          setHasRated(false);
         }
 
         try {
@@ -342,9 +348,12 @@ export default function ListingDetail() {
     }
 
     setSubmittingRating(true);
+    const previousRating = userRating;
+    const ratingValue = sanitizeStars(stars);
+    setUserRating(ratingValue);
+    setHasRated(true);
     try {
       const listingRef = doc(db, 'listings', listingId);
-      const ratingValue = sanitizeStars(stars);
       const ratingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
 
       const result = await runTransaction(db, async (tx) => {
@@ -411,6 +420,8 @@ export default function ListingDetail() {
       setUserRating(ratingValue);
       showToast(result.wasUpdate ? 'Rating updated successfully!' : 'Rating submitted successfully!', 'success');
     } catch (error: any) {
+      setUserRating(previousRating);
+      setHasRated(previousRating > 0);
       console.error('[Rating] submit failed:', error);
       if (error?.code === 'permission-denied') {
         showToast('Rating permission denied. Please refresh and try again.', 'error');
@@ -557,10 +568,13 @@ export default function ListingDetail() {
               <div className="card space-y-3">
                 <h3 className="text-xl">Billboard Details</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Location: {locationDisplay || 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Exact Address: {listing.address || 'N/A'}</p>
                   <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Traffic Level: {trafficLevel}</p>
                   <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Size: {String((listing as any).size || 'N/A')}</p>
                   <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Price Per Month: {price ? `₹${price.toLocaleString('en-IN')}` : 'N/A'}</p>
                   <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Near College: {listing.nearCollege || 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Near Landmark: {String((listing as any).nearLandmark || listing.landmark || 'N/A')}</p>
                 </div>
               </div>
             )}
@@ -669,21 +683,33 @@ export default function ListingDetail() {
                 <p className="text-xs text-text-muted mb-2">
                   {userRating > 0 ? `Your rating: ${userRating} star${userRating > 1 ? 's' : ''} (tap to update)` : 'Rate this listing'}
                 </p>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1" style={{ cursor: 'pointer' }}>
                   {authLoading ? (
                     <p className="text-xs text-text-muted">Checking login status...</p>
                   ) : user ? (
                     [1, 2, 3, 4, 5].map((star) => (
-                      <button
+                      <span
                         key={star}
-                        type="button"
-                        disabled={submittingRating}
-                      onClick={() => void handleRate(star)}
-                        className="p-1 rounded-lg disabled:opacity-60"
+                        onMouseEnter={() => setHoverRating(star)}
+                        onMouseLeave={() => setHoverRating(0)}
+                        onClick={() => {
+                          if (submittingRating) return;
+                          void handleRate(star);
+                        }}
+                        style={{
+                          fontSize: '32px',
+                          lineHeight: '1',
+                          color: star <= (hoverRating || userRating) ? '#F59E0B' : '#444455',
+                          transition: 'color 100ms ease',
+                          userSelect: 'none',
+                          WebkitUserSelect: 'none',
+                          opacity: submittingRating ? 0.6 : 1
+                        }}
                         aria-label={`Rate ${star}`}
+                        role="button"
                       >
-                        <Star size={24} className={star <= userRating ? 'text-warning' : 'text-border'} fill={star <= userRating ? 'currentColor' : 'none'} />
-                      </button>
+                        ★
+                      </span>
                     ))
                   ) : (
                     <p className="text-sm text-text-muted">
@@ -691,6 +717,16 @@ export default function ListingDetail() {
                     </p>
                   )}
                 </div>
+                {user && hasRated && (
+                  <p style={{ color: '#22C55E', fontSize: '13px', marginTop: '8px' }}>
+                    ✓ You rated this {userRating} / 5
+                  </p>
+                )}
+                {!user && (
+                  <p style={{ color: '#9090AA', fontSize: '13px', marginTop: '8px' }}>
+                    Please login to rate this listing
+                  </p>
+                )}
               </div>
             </div>
 
@@ -730,7 +766,13 @@ export default function ListingDetail() {
             <div className="card">
               <p className="tag-label text-text-muted">Listing Price</p>
               <p className="mt-2 text-3xl font-bold text-text">{price ? `₹${price.toLocaleString('en-IN')}` : 'Contact for Price'}</p>
-              <p className="mt-2 text-xs text-text-muted">{listing.category === 'advertisement' || isBillboard ? 'Sponsored placement plan' : 'Verified provider listing'}</p>
+              <p className="mt-2 text-xs text-text-muted">
+                {isBillboard
+                  ? 'Billboard rental listing'
+                  : listing.category === 'advertisement'
+                    ? 'Promotional advertisement listing'
+                    : 'Verified provider listing'}
+              </p>
             </div>
 
             <div className="card space-y-2">

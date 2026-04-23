@@ -38,6 +38,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; role?: 'student' | '
 const SiteChrome = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const { user } = useAuth();
+  const isAdmin = (user?.email || '').toLowerCase() === 'campanest7@gmail.com';
   const [scrolled, setScrolled] = React.useState(false);
   const isAuthPage = location.pathname === '/login';
 
@@ -68,12 +69,21 @@ const SiteChrome = ({ children }: { children: React.ReactNode }) => {
               </span>
             </Link>
             <nav className="hidden md:flex items-center gap-6">
-              <Link className="nav-link" to="/home">Buy/Rent</Link>
-              <Link className="nav-link" to="/home">PG & Hostels</Link>
-              <Link className="nav-link" to="/emergency">Emergency</Link>
-              <Link className="nav-link" to="/about">About</Link>
+              {isAdmin ? (
+                <>
+                  <Link className="nav-link" to="/admin/listings">Manage Listings</Link>
+                  <Link className="nav-link" to="/admin/listings/new">Add Listing</Link>
+                </>
+              ) : (
+                <>
+                  <Link className="nav-link" to="/home">Buy/Rent</Link>
+                  <Link className="nav-link" to="/home">PG & Hostels</Link>
+                  <Link className="nav-link" to="/emergency">Emergency</Link>
+                  <Link className="nav-link" to="/about">About</Link>
+                </>
+              )}
             </nav>
-            <Link to={user ? '/home' : '/login'} className="btn-primary py-2 px-5 text-sm">
+            <Link to={user ? (isAdmin ? '/admin/listings' : '/home') : '/login'} className="btn-primary py-2 px-5 text-sm">
               {user ? 'Dashboard' : 'Login / Sign up'}
             </Link>
           </div>
@@ -126,8 +136,10 @@ const AppContent = () => {
             <Route path="/student-dashboard" element={<Navigate to="/home" replace />} />
             <Route path="/listing/:id" element={<ListingDetail />} />
             <Route path="/admin" element={<ProtectedRoute role="admin"><AdminPanel /></ProtectedRoute>} />
+            <Route path="/admin/listings" element={<ProtectedRoute role="admin"><AdminPanel /></ProtectedRoute>} />
             <Route path="/admin-dashboard" element={<Navigate to="/admin" replace />} />
             <Route path="/admin/add-listing" element={<ProtectedRoute role="admin"><AdminAddListing /></ProtectedRoute>} />
+            <Route path="/admin/listings/new" element={<ProtectedRoute role="admin"><AdminAddListing /></ProtectedRoute>} />
             <Route path="/about" element={<ProtectedRoute role="student"><AboutPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/home" replace />} />
           </Routes>

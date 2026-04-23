@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { collection, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { addDays, format } from 'date-fns';
 import { CATEGORY_LABELS } from '../constants';
-import { ChartColumnIncreasing, Check, Eye, LayoutDashboard, List, Pencil, ShieldCheck, Star, TimerReset, Trash2, X } from 'lucide-react';
+import { Check, Eye, Home, List, Pencil, PlusCircle, Star, TimerReset, Trash2, X } from 'lucide-react';
 
 const toSafeNonNegativeInt = (value: unknown) => {
   const next = Number(value);
@@ -54,6 +54,7 @@ const readLegacyPhotos = (data: Record<string, any>) => {
 export default function AdminPanel() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
   const [listings, setListings] = useState<Listing[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -288,6 +289,8 @@ export default function AdminPanel() {
   };
 
   const categories = ['all', 'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'];
+  const isManageListingsActive = location.pathname === '/admin' || location.pathname === '/admin/listings';
+  const isAddListingActive = location.pathname === '/admin/add-listing' || location.pathname === '/admin/listings/new';
 
   return (
     <div className="min-h-screen pb-20">
@@ -300,7 +303,7 @@ export default function AdminPanel() {
           <div className="flex flex-col items-end gap-2">
             <p className="text-xs text-text-muted break-all">{user.email}</p>
             <div className="flex items-center gap-2">
-              <Link to="/admin/add-listing" className="btn-primary text-sm px-4 py-2">+ Add Listing</Link>
+              <Link to="/admin/listings/new" className="btn-primary text-sm px-4 py-2">+ Add Listing</Link>
               <button className="btn-outline text-sm px-4 py-2" onClick={handleLogout}>Logout</button>
             </div>
           </div>
@@ -311,14 +314,23 @@ export default function AdminPanel() {
         <aside className="admin-sidebar">
           <p className="tag-label text-text-muted px-2 mb-2">Admin Navigation</p>
           <nav className="space-y-1">
-            <Link to="/admin" className="w-full admin-nav-item admin-nav-item-active inline-flex items-center"><List size={16} /> Manage Listings</Link>
-            <button type="button" className="w-full admin-nav-item"><LayoutDashboard size={16} /> Dashboard</button>
-            <button type="button" className="w-full admin-nav-item"><ChartColumnIncreasing size={16} /> Analytics</button>
-            <button type="button" className="w-full admin-nav-item"><ShieldCheck size={16} /> Moderation</button>
+            <Link to="/home" className="w-full admin-nav-item inline-flex items-center"><Home size={16} /> Home</Link>
+            <Link to="/admin/listings" className={`w-full admin-nav-item inline-flex items-center ${isManageListingsActive ? 'admin-nav-item-active' : ''}`}><List size={16} /> Manage Listings</Link>
+            <Link to="/admin/listings/new" className={`w-full admin-nav-item inline-flex items-center ${isAddListingActive ? 'admin-nav-item-active' : ''}`}><PlusCircle size={16} /> Add New Listing</Link>
           </nav>
         </aside>
 
         <div className="space-y-4">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={() => navigate('/admin/listings')}
+              className="text-[#FF7A00] text-sm font-medium inline-flex items-center gap-1"
+            >
+              <span aria-hidden="true">←</span>
+              <span>Back to Listings</span>
+            </button>
+          </div>
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
               <button type="button" className="btn-outline text-xs px-3 py-2" onClick={() => void migrateImageFields()}>
@@ -524,7 +536,7 @@ export default function AdminPanel() {
                   <button
                     type="button"
                     className="btn-outline text-xs px-3 py-2 inline-flex items-center"
-                    onClick={() => navigate(`/admin/add-listing?id=${encodeURIComponent(l.id)}`)}
+                    onClick={() => navigate(`/admin/listings/new?id=${encodeURIComponent(l.id)}`)}
                     title="Edit listing"
                     aria-label="Edit listing"
                   >

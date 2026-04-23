@@ -14,9 +14,9 @@ export const HOME_CATEGORIES = [
   'block',
   'doctor',
   'requirement',
-  'secondhand',
   'advertisement',
-  'billboard'
+  'billboard',
+  'secondhand'
 ] as const;
 
 export const CATEGORY_LABELS: Record<string, string> = {
@@ -30,8 +30,8 @@ export const CATEGORY_LABELS: Record<string, string> = {
   doctor: 'Doctor for Students',
   requirement: 'Requirement',
   secondhand: 'Second Hand Items',
-  advertisement: 'Advertisement',
-  billboard: 'ADVERTISEMENT'
+  advertisement: 'ADVERTISEMENT',
+  billboard: 'BILLBOARD'
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
@@ -44,8 +44,8 @@ export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   block: 'Register apartments or commercial spaces for rent',
   secondhand: 'Sell or buy used items easily',
   requirement: 'Post your needs like roommate, PG, or flat',
-  advertisement: 'Promote events, shops, or special offers',
-  billboard: 'Find billboard and hoarding ad spaces near colleges',
+  advertisement: 'Post promotional ads, offers, and announcements',
+  billboard: 'Find physical billboard and hoarding spaces for rent near colleges',
   emergency: 'Access important emergency contacts and services',
   doctor: 'Help students find nearby doctors quickly'
 };

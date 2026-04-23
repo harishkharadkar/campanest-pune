@@ -15,7 +15,8 @@ export const HOME_CATEGORIES = [
   'doctor',
   'requirement',
   'secondhand',
-  'advertisement'
+  'advertisement',
+  'billboard'
 ] as const;
 
 export const CATEGORY_LABELS: Record<string, string> = {
@@ -29,7 +30,8 @@ export const CATEGORY_LABELS: Record<string, string> = {
   doctor: 'Doctor for Students',
   requirement: 'Requirement',
   secondhand: 'Second Hand Items',
-  advertisement: 'Advertisement'
+  advertisement: 'Advertisement',
+  billboard: 'ADVERTISEMENT'
 };
 
 export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
@@ -43,6 +45,7 @@ export const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   secondhand: 'Sell or buy used items easily',
   requirement: 'Post your needs like roommate, PG, or flat',
   advertisement: 'Promote events, shops, or special offers',
+  billboard: 'Find billboard and hoarding ad spaces near colleges',
   emergency: 'Access important emergency contacts and services',
   doctor: 'Help students find nearby doctors quickly'
 };
@@ -61,6 +64,7 @@ export const PRICING = {
   blockrent: 199,
   avashyakta: 49,
   newopening: 99,
+  billboard: 199,
   advertisement: {
     3: 99,
     7: 199,
@@ -69,7 +73,7 @@ export const PRICING = {
   extraItem: 39
 } as const;
 
-export const NO_FREE_TRIAL_SERVICE_TYPES = ['secondhand', 'block', 'requirement', 'advertisement'] as const;
+export const NO_FREE_TRIAL_SERVICE_TYPES = ['secondhand', 'block', 'requirement', 'advertisement', 'billboard'] as const;
 
 export const DEFAULT_DURATION: Record<string, number> = {
   pg: 30,
@@ -82,6 +86,7 @@ export const DEFAULT_DURATION: Record<string, number> = {
   doctor: 30,
   requirement: 30,
   secondhand: 30,
+  billboard: 30,
   advertisement: 7
 };
 

@@ -23,7 +23,8 @@ export type ListingCategory =
   | 'doctor'
   | 'requirement'
   | 'secondhand'
-  | 'advertisement';
+  | 'advertisement'
+  | 'billboard';
 
 export type ServiceType = ListingCategory | 'blockrent' | 'avashyakta' | 'newopening';
 export type ListingPlanType = 'monthly' | 'perPost' | 'ad';
@@ -89,7 +90,7 @@ export interface Listing {
   location?: {
     lat: number;
     lng: number;
-  };
+  } | string;
   phone: string;
   whatsapp?: string;
   photos?: string[];
@@ -160,6 +161,10 @@ export interface Listing {
   // Advertisement specific
   title?: string;
   bannerImage?: string;
+  trafficLevel?: 'Very High' | 'High' | 'Medium' | 'Low';
+  size?: string;
+  contactNumber?: string;
+  whatsappNumber?: string;
 
   // Doctor specific
   doctorName?: string;

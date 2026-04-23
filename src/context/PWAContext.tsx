@@ -15,63 +15,62 @@ export const PWAProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const { showToast } = useToast();
 
   useEffect(() => {
-    const handler = (e: any) => {
-      console.log("PWA: beforeinstallprompt event fired");
-      // Prevent the mini-infobar from appearing on mobile
+    const beforeInstallHandler = (e: any) => {
+      console.log('PWA: beforeinstallprompt event fired');
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       setDeferredPrompt(e);
       setIsInstallable(true);
     };
 
-    window.addEventListener('beforeinstallprompt', handler);
-
-    window.addEventListener('appinstalled', () => {
-      console.log("PWA: App installed successfully");
+    const appInstalledHandler = () => {
+      console.log('PWA: App installed successfully');
       setDeferredPrompt(null);
       setIsInstallable(false);
-      localStorage.setItem("campanest_installed", "true");
-      showToast("App installed successfully! 🚀", "success");
-    });
+      localStorage.setItem('campanest_installed', 'true');
+      showToast('App installed successfully!', 'success');
+    };
 
-    // Check if already installed
+    window.addEventListener('beforeinstallprompt', beforeInstallHandler);
+    window.addEventListener('appinstalled', appInstalledHandler);
+
     if (window.matchMedia('(display-mode: standalone)').matches) {
-      localStorage.setItem("campanest_installed", "true");
+      localStorage.setItem('campanest_installed', 'true');
     }
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
+      window.removeEventListener('beforeinstallprompt', beforeInstallHandler);
+      window.removeEventListener('appinstalled', appInstalledHandler);
     };
   }, [showToast]);
 
   const installApp = async () => {
-    console.log("PWA: installApp called");
+    console.log('PWA: installApp called');
     try {
       if (!deferredPrompt) {
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
         if (isIOS) {
-          showToast("To install on iOS: Tap Share → Add to Home Screen", "info");
+          showToast('To install on iOS: tap Share, then Add to Home Screen.', 'info');
         } else {
-          showToast("Install option not supported on this device", "error");
+          showToast('Install prompt unavailable. Open browser menu and tap Install app or Add to Home Screen.', 'info');
         }
         return;
       }
 
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
-      
+
       if (outcome === 'accepted') {
         console.log('PWA: User accepted the install prompt');
-        localStorage.setItem("campanest_installed", "true");
+        localStorage.setItem('campanest_installed', 'true');
       } else {
         console.log('PWA: User dismissed the install prompt');
       }
-      
+
       setDeferredPrompt(null);
       setIsInstallable(false);
     } catch (error) {
-      console.error("PWA: Install error", error);
-      showToast("Something went wrong during installation", "error");
+      console.error('PWA: Install error', error);
+      showToast('Something went wrong during installation', 'error');
     }
   };
 

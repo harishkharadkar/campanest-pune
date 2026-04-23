@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/Toast';
 import { addDays, format } from 'date-fns';
 import { CATEGORY_LABELS } from '../constants';
-import { ChartColumnIncreasing, Check, Eye, LayoutDashboard, Pencil, ShieldCheck, Star, TimerReset, Trash2, X } from 'lucide-react';
+import { ChartColumnIncreasing, Check, Eye, LayoutDashboard, List, Pencil, ShieldCheck, Star, TimerReset, Trash2, X } from 'lucide-react';
 
 const toSafeNonNegativeInt = (value: unknown) => {
   const next = Number(value);
@@ -287,7 +287,7 @@ export default function AdminPanel() {
     }
   };
 
-  const categories = ['all', 'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'];
+  const categories = ['all', 'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'];
 
   return (
     <div className="min-h-screen pb-20">
@@ -311,7 +311,8 @@ export default function AdminPanel() {
         <aside className="admin-sidebar">
           <p className="tag-label text-text-muted px-2 mb-2">Admin Navigation</p>
           <nav className="space-y-1">
-            <button type="button" className="w-full admin-nav-item admin-nav-item-active"><LayoutDashboard size={16} /> Listings</button>
+            <Link to="/admin" className="w-full admin-nav-item admin-nav-item-active inline-flex items-center"><List size={16} /> Manage Listings</Link>
+            <button type="button" className="w-full admin-nav-item"><LayoutDashboard size={16} /> Dashboard</button>
             <button type="button" className="w-full admin-nav-item"><ChartColumnIncreasing size={16} /> Analytics</button>
             <button type="button" className="w-full admin-nav-item"><ShieldCheck size={16} /> Moderation</button>
           </nav>

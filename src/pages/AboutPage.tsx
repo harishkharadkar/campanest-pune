@@ -29,7 +29,7 @@ const warningPoints = [
 export default function AboutPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
-  const { installApp } = usePWA();
+  const { installApp, isInstallable } = usePWA();
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
 
@@ -121,11 +121,14 @@ export default function AboutPage() {
 
         <section className="card space-y-3">
           <h3 className="font-bold">Install App</h3>
+          <p className="text-xs text-zinc-500">
+            Add CampaNest to your home screen for faster access with app icon support.
+          </p>
           <button
             onClick={() => void installApp()}
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
-            <Smartphone size={16} /> Install App
+            <Smartphone size={16} /> {isInstallable ? 'Install App' : 'Add to Home Screen'}
           </button>
         </section>
 

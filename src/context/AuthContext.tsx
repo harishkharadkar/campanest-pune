@@ -5,19 +5,19 @@ import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 
 interface AuthContextType {
-  user: User | null;
+  user: User | null | undefined;
   profile: UserProfile | null;
   loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType>({ 
-  user: null, 
+  user: undefined, 
   profile: null, 
   loading: true
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null | undefined>(undefined);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 

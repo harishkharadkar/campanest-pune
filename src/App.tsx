@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { useAuth } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
 import { PWAProvider } from './context/PWAContext';
 import CampaNestLogo from './components/CampaNestLogo';
@@ -58,10 +58,10 @@ const SiteChrome = ({ children }: { children: React.ReactNode }) => {
               <span
                 className="hidden md:inline leading-none text-[#FF7A00]"
                 style={{
-                  fontFamily: 'Poppins, Montserrat, Inter, Nunito, sans-serif',
+                  fontFamily: 'Poppins, Nunito, sans-serif',
                   fontSize: '30px',
                   fontWeight: 800,
-                  letterSpacing: '-0.02em'
+                  letterSpacing: 0
                 }}
               >
                 CampaNest
@@ -142,9 +142,7 @@ export default function App() {
   return (
     <ToastProvider>
       <PWAProvider>
-        <AuthProvider>
-          <AppContent />
-        </AuthProvider>
+        <AppContent />
       </PWAProvider>
     </ToastProvider>
   );

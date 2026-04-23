@@ -7,12 +7,13 @@ import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
 import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
-import { Listing, ListingCategory, ListingPlanType, MenuItem } from '../types';
+import { Listing, ListingCategory, ListingPlanType, MenuItem, ServiceType } from '../types';
 import { getListingPhotos } from '../lib/listingPhotos';
 
 const CATEGORIES: ListingCategory[] = [
-  'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'
+  'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'
 ];
+const SERVICE_TYPES: ServiceType[] = [...CATEGORIES, 'blockrent', 'avashyakta', 'newopening'];
 const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
 const MAX_PHOTOS = 5;
 const IMAGE_INPUT_LABELS = ['Image 1 (Main)', 'Image 2', 'Image 3', 'Image 4', 'Image 5'];
@@ -51,6 +52,7 @@ const buildPlan = (category: ListingCategory, adDuration: number): { pricePlan: 
     const price = (PRICING.advertisement as Record<number, number>)[adDuration] || 199;
     return { pricePlan: price, duration: adDuration, planType: 'ad' };
   }
+  if (category === 'billboard') return { pricePlan: PRICING.billboard, duration: 30, planType: 'monthly' };
   if (category === 'requirement') return { pricePlan: PRICING.requirement, duration: 30, planType: 'perPost' };
   if (category === 'secondhand') return { pricePlan: PRICING.secondhand, duration: 30, planType: 'perPost' };
   if (category === 'block') return { pricePlan: PRICING.block, duration: 30, planType: 'monthly' };
@@ -82,8 +84,10 @@ const parseLocationCoordinates = (raw: string): { lat: number; lng: number } | n
 };
 
 const toLocationInputValue = (listing?: Partial<Listing> | null) => {
-  const lat = listing?.location?.lat;
-  const lng = listing?.location?.lng;
+  const locationValue = listing?.location;
+  if (!locationValue || typeof locationValue === 'string') return '';
+  const lat = locationValue.lat;
+  const lng = locationValue.lng;
   if (typeof lat !== 'number' || typeof lng !== 'number') return '';
   return `${lat}, ${lng}`;
 };
@@ -376,8 +380,8 @@ export default function AdminAddListing() {
         area: getText('area'),
         nearCollege: getText('nearCollege'),
         address: getText('address'),
-        phone: getText('phone'),
-        whatsapp: getText('whatsapp'),
+        phone: getText('phone') || getText('contactNumber'),
+        whatsapp: getText('whatsapp') || getText('whatsappNumber'),
         description: getText('description'),
         price: getNum('price', Number((initialListing as any)?.price || 0)),
         photos: finalPhotos,
@@ -401,9 +405,9 @@ export default function AdminAddListing() {
         updatedAt: new Date().toISOString()
       };
 
-      if (parsedLocation) {
+      if (category !== 'billboard' && parsedLocation) {
         listing.location = parsedLocation;
-      } else if (isEditMode) {
+      } else if (category !== 'billboard' && isEditMode) {
         listing.location = deleteField();
       }
 
@@ -520,6 +524,25 @@ export default function AdminAddListing() {
         listing.title = getText('title');
       }
 
+      if (category === 'billboard') {
+        const billboardLocation = getText('billboardLocation') || getText('address');
+        const contactNumber = getText('contactNumber') || getText('phone');
+        const whatsappNumber = getText('whatsappNumber') || getText('whatsapp');
+        const pricePerMonth = getNum('pricePerMonth', Number((initialListing as any)?.pricePerMonth || 0));
+        listing.serviceType = 'billboard';
+        listing.name = getText('name') || billboardLocation || listing.name;
+        listing.location = billboardLocation;
+        listing.address = billboardLocation;
+        listing.trafficLevel = getText('trafficLevel') || 'Medium';
+        listing.size = getText('size');
+        listing.pricePerMonth = pricePerMonth;
+        listing.price = pricePerMonth;
+        listing.contactNumber = contactNumber;
+        listing.whatsappNumber = whatsappNumber;
+        listing.phone = contactNumber;
+        listing.whatsapp = whatsappNumber;
+      }
+
       if (category === 'doctor') {
         listing.doctorName = getText('doctorName') || listing.name;
         listing.name = listing.doctorName;
@@ -627,20 +650,19 @@ export default function AdminAddListing() {
             <select name="category" className="input-field" value={category} onChange={(e) => setCategory(e.target.value as ListingCategory)}>
               {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
             </select>
-            <input
-              name="serviceType"
-              placeholder="Service Type"
-              className="input-field"
-              defaultValue={String((initialListing as any)?.serviceType || initialListing?.category || category)}
-            />
+            <select name="serviceType" className="input-field" defaultValue={String((initialListing as any)?.serviceType || initialListing?.category || category)}>
+              {SERVICE_TYPES.map((serviceType) => (
+                <option key={serviceType} value={serviceType}>{serviceType}</option>
+              ))}
+            </select>
             <select name="area" className="input-field" defaultValue={initialListing?.area || ''} required>
               <option value="">Select Area</option>
               {AREAS.map((area) => <option key={area} value={area}>{area}</option>)}
             </select>
             <input name="nearCollege" placeholder="Near College" className="input-field" defaultValue={initialListing?.nearCollege || ''} required={category !== 'advertisement'} />
-            <textarea name="address" placeholder="Address" className="input-field h-20" defaultValue={initialListing?.address || ''} required={category !== 'advertisement'} />
-            <input name="phone" placeholder="Contact Number" className="input-field" defaultValue={initialListing?.phone || ''} required />
-            <input name="whatsapp" placeholder="WhatsApp Number" className="input-field" defaultValue={initialListing?.whatsapp || ''} required />
+            <textarea name="address" placeholder="Address" className="input-field h-20" defaultValue={initialListing?.address || ''} required={category !== 'advertisement' && category !== 'billboard'} />
+            <input name="phone" placeholder="Contact Number" className="input-field" defaultValue={initialListing?.phone || ''} required={category !== 'billboard'} />
+            <input name="whatsapp" placeholder="WhatsApp Number" className="input-field" defaultValue={initialListing?.whatsapp || ''} required={category !== 'billboard'} />
             <textarea name="description" placeholder="Description" className="input-field h-24" defaultValue={initialListing?.description || ''} required />
             <input name="price" type="number" placeholder="Price" className="input-field" defaultValue={Number((initialListing as any)?.price || 0)} />
             <input
@@ -820,6 +842,32 @@ export default function AdminAddListing() {
                 <option value={15}>15 days (Rs399)</option>
               </select>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isSponsored" defaultChecked={Boolean(initialListing?.isSponsored)} /> Sponsored</label>
+            </div>
+          )}
+
+          {category === 'billboard' && (
+            <div className="space-y-3">
+              <h3 className="font-bold">Billboard Fields</h3>
+              <input
+                name="billboardLocation"
+                placeholder="Location (e.g. FC Road near Symbiosis)"
+                className="input-field"
+                defaultValue={typeof (initialListing as any)?.location === 'string' ? (initialListing as any).location : (initialListing?.address || '')}
+                required
+              />
+              <select name="trafficLevel" className="input-field" defaultValue={String((initialListing as any)?.trafficLevel || 'Medium')} required>
+                <option value="Very High">Very High</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+              </select>
+              <input name="size" placeholder="Billboard Size (e.g. 20ft x 10ft)" className="input-field" defaultValue={String((initialListing as any)?.size || '')} required />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">₹</span>
+                <input name="pricePerMonth" type="number" placeholder="Price Per Month" className="input-field pl-8" defaultValue={Number((initialListing as any)?.pricePerMonth || 0)} required />
+              </div>
+              <input name="contactNumber" placeholder="Contact Number" className="input-field" defaultValue={String((initialListing as any)?.contactNumber || initialListing?.phone || '')} required />
+              <input name="whatsappNumber" placeholder="WhatsApp Number" className="input-field" defaultValue={String((initialListing as any)?.whatsappNumber || initialListing?.whatsapp || '')} required />
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, increment, limit, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -48,8 +48,11 @@ const formatLastUpdated = (value: any) => {
 };
 
 const getListingMapUrl = (listing: Listing) => {
-  const lat = listing.location?.lat;
-  const lng = listing.location?.lng;
+  if (typeof listing.location === 'string' && listing.location.trim()) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(listing.location.trim())}`;
+  }
+  const lat = typeof listing.location === 'object' ? listing.location?.lat : undefined;
+  const lng = typeof listing.location === 'object' ? listing.location?.lng : undefined;
   if (typeof lat === 'number' && typeof lng === 'number' && Number.isFinite(lat) && Number.isFinite(lng)) {
     return `https://www.google.com/maps?q=${lat},${lng}`;
   }
@@ -118,7 +121,7 @@ export default function ListingDetail() {
   const { id } = useParams<{ id: string }>();
   const listingId = (id || '').trim();
   const navigate = useNavigate();
-  const { user, profile } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { showToast } = useToast();
 
   const [listing, setListing] = useState<Listing | null>(null);
@@ -286,6 +289,18 @@ export default function ListingDetail() {
   const displayedAverageRating = Math.min(5, Math.max(0, Number(listing.avgRating ?? listing.averageRating ?? 0)));
   const displayedTotalRatings = Math.max(0, Number(listing.totalRatings ?? 0));
   const displayedViews = Number(listing.views ?? listing.totalViews ?? 0);
+  const isBillboard = listing.category === 'billboard' || String((listing as any).serviceType || '').toLowerCase() === 'billboard';
+  const trafficLevel = String((listing as any).trafficLevel || 'Medium');
+  const locationDisplay = String((listing as any).location || listing.address || listing.area || '').trim();
+  const contactNumber = String((listing as any).contactNumber || listing.phone || '').trim();
+  const whatsappNumber = String((listing as any).whatsappNumber || listing.whatsapp || listing.phone || '').trim();
+  const trafficBadgeClass = trafficLevel === 'Very High'
+    ? 'bg-red-500/20 text-red-300 border-red-500/40'
+    : trafficLevel === 'High'
+      ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+      : trafficLevel === 'Medium'
+        ? 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'
+        : 'bg-green-500/20 text-green-300 border-green-500/40';
   const listingImages = getListingImages(listing);
   const hasImages = listingImages.length > 0;
   const currentImage = hasImages ? getOptimizedUrl(listingImages[activeImageIndex], 'detail') : '';
@@ -321,8 +336,7 @@ export default function ListingDetail() {
       return;
     }
 
-    const isStudent = profile?.role === 'student';
-    if (!isStudent) {
+    if (profile?.role !== 'student') {
       showToast('Only students can rate', 'error');
       return;
     }
@@ -330,74 +344,79 @@ export default function ListingDetail() {
     setSubmittingRating(true);
     try {
       const listingRef = doc(db, 'listings', listingId);
+      const ratingValue = sanitizeStars(stars);
       const ratingRef = doc(db, 'listings', listingId, 'ratings', user.uid);
-      const nextStars = sanitizeStars(stars);
 
-      const nextMetrics = await runTransaction(db, async (transaction) => {
-        const listingSnap = await transaction.get(listingRef);
+      const result = await runTransaction(db, async (tx) => {
+        const listingSnap = await tx.get(listingRef);
         if (!listingSnap.exists()) throw new Error('Listing not found');
-        const oldRatingSnap = await transaction.get(ratingRef);
-        const existingCreatedAt = oldRatingSnap.data()?.createdAt;
 
-        const allRatingsSnap = await getDocs(collection(db, 'listings', listingId, 'ratings'));
-        const ratingsByUser = new Map<string, number>();
-        allRatingsSnap.docs.forEach((ratingDoc) => {
-          const uid = String(ratingDoc.id || '');
-          const value = sanitizeStars(Number((ratingDoc.data() as any)?.rating || 0));
-          if (uid) ratingsByUser.set(uid, value);
-        });
-        ratingsByUser.set(user.uid, nextStars);
+        const existingRatingSnap = await tx.get(ratingRef);
+        const listingData = listingSnap.data() as any;
 
-        let total = 0;
-        let sum = 0;
-        const counts = [0, 0, 0, 0, 0];
-        ratingsByUser.forEach((ratingValue) => {
-          total += 1;
-          sum += ratingValue;
-          counts[ratingValue - 1] += 1;
-        });
-        const average = total > 0 ? roundToOneDecimal(sum / total) : 0;
+        const oldAverage = Number(listingData?.avgRating ?? listingData?.averageRating ?? 0);
+        const oldTotal = Math.max(0, Number(listingData?.totalRatings || 0));
+        const oldUserRating = existingRatingSnap.exists()
+          ? sanitizeStars(Number(existingRatingSnap.data()?.rating || 0))
+          : null;
 
-        transaction.set(
-          ratingRef,
-          {
-            uid: user.uid,
-            rating: nextStars,
-            createdAt: existingCreatedAt || serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
+        let nextTotal = oldTotal;
+        let nextAverage = oldAverage;
 
-        transaction.update(listingRef, {
-          avgRating: average,
-          averageRating: average,
-          totalRatings: total,
+        if (oldUserRating === null) {
+          nextTotal = oldTotal + 1;
+          nextAverage = nextTotal > 0
+            ? Number((((oldAverage * oldTotal) + ratingValue) / nextTotal).toFixed(1))
+            : 0;
+        } else {
+          nextAverage = nextTotal > 0
+            ? Number((((oldAverage * oldTotal) - oldUserRating + ratingValue) / nextTotal).toFixed(1))
+            : 0;
+        }
+
+        tx.set(ratingRef, {
+          uid: user.uid,
+          rating: ratingValue,
+          createdAt: existingRatingSnap.data()?.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        tx.update(listingRef, {
+          avgRating: nextAverage,
+          averageRating: nextAverage,
+          totalRatings: nextTotal,
           lastUpdated: serverTimestamp()
         });
 
-        return {
-          average,
-          total,
-          counts,
-          wasExisting: oldRatingSnap.exists()
-        };
+        return { nextAverage, nextTotal, wasUpdate: oldUserRating !== null };
       });
 
       setListing((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          averageRating: nextMetrics.average,
-          avgRating: nextMetrics.average,
-          totalRatings: nextMetrics.total
+          avgRating: result.nextAverage,
+          averageRating: result.nextAverage,
+          totalRatings: result.nextTotal
         };
       });
-      setRatingsBreakdown(nextMetrics.counts);
-      setUserRating(nextStars);
-      showToast(nextMetrics.wasExisting ? 'Rating updated successfully!' : 'Rating submitted successfully!', 'success');
+      setRatingsBreakdown((prev) => {
+        const next = [...prev];
+        if (userRating >= 1 && userRating <= 5) {
+          next[userRating - 1] = Math.max(0, (next[userRating - 1] || 0) - 1);
+        }
+        next[ratingValue - 1] = (next[ratingValue - 1] || 0) + 1;
+        return next;
+      });
+      setUserRating(ratingValue);
+      showToast(result.wasUpdate ? 'Rating updated successfully!' : 'Rating submitted successfully!', 'success');
     } catch (error: any) {
-      showToast(error?.message || 'Failed to submit rating', 'error');
+      console.error('[Rating] submit failed:', error);
+      if (error?.code === 'permission-denied') {
+        showToast('Rating permission denied. Please refresh and try again.', 'error');
+      } else {
+        showToast(error?.message || 'Failed to submit rating. Please try again.', 'error');
+      }
     } finally {
       setSubmittingRating(false);
     }
@@ -520,13 +539,31 @@ export default function ListingDetail() {
             </div>
             <div className="card">
               <h1 className="text-3xl">{listing.name}</h1>
-              <p className="mt-2 text-text-muted flex items-center gap-1 text-sm"><MapPin size={14} /> {listing.area} · Near {listing.nearCollege || 'Campus Area'}</p>
+              <p className="mt-2 text-text-muted flex items-center gap-1 text-sm"><MapPin size={14} /> {isBillboard && locationDisplay ? locationDisplay : listing.area} · Near {listing.nearCollege || 'Campus Area'}</p>
               <p className="mt-2 text-xs text-text-muted">{formatLastUpdated(listing.lastUpdated || listing.createdAt)}</p>
+              {isBillboard && (
+                <div className="mt-3 flex items-center flex-wrap gap-2">
+                  <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${trafficBadgeClass}`}>{trafficLevel}</span>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border border-border bg-surface-elevated text-text">Area: {listing.area}</span>
+                </div>
+              )}
               <div className="mt-4 flex items-center flex-wrap gap-4 text-sm">
                 <RatingStars avgRating={displayedAverageRating} totalRatings={displayedTotalRatings} size={14} className="font-medium" />
                 <span className="inline-flex items-center gap-1 text-text-muted"><Eye size={14} /> {displayedViews} views</span>
               </div>
             </div>
+
+            {isBillboard && (
+              <div className="card space-y-3">
+                <h3 className="text-xl">Billboard Details</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Traffic Level: {trafficLevel}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Size: {String((listing as any).size || 'N/A')}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Price Per Month: {price ? `₹${price.toLocaleString('en-IN')}` : 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Near College: {listing.nearCollege || 'N/A'}</p>
+                </div>
+              </div>
+            )}
 
             {(listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop') && (
               <div className="card">
@@ -633,18 +670,26 @@ export default function ListingDetail() {
                   {userRating > 0 ? `Your rating: ${userRating} star${userRating > 1 ? 's' : ''} (tap to update)` : 'Rate this listing'}
                 </p>
                 <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      disabled={submittingRating}
+                  {authLoading ? (
+                    <p className="text-xs text-text-muted">Checking login status...</p>
+                  ) : user ? (
+                    [1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        disabled={submittingRating}
                       onClick={() => void handleRate(star)}
-                      className="p-1 rounded-lg disabled:opacity-60"
-                      aria-label={`Rate ${star}`}
-                    >
-                      <Star size={24} className={star <= userRating ? 'text-warning' : 'text-border'} fill={star <= userRating ? 'currentColor' : 'none'} />
-                    </button>
-                  ))}
+                        className="p-1 rounded-lg disabled:opacity-60"
+                        aria-label={`Rate ${star}`}
+                      >
+                        <Star size={24} className={star <= userRating ? 'text-warning' : 'text-border'} fill={star <= userRating ? 'currentColor' : 'none'} />
+                      </button>
+                    ))
+                  ) : (
+                    <p className="text-sm text-text-muted">
+                      Please <Link to="/login" className="text-primary">login</Link> to rate
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -685,13 +730,13 @@ export default function ListingDetail() {
             <div className="card">
               <p className="tag-label text-text-muted">Listing Price</p>
               <p className="mt-2 text-3xl font-bold text-text">{price ? `₹${price.toLocaleString('en-IN')}` : 'Contact for Price'}</p>
-              <p className="mt-2 text-xs text-text-muted">{listing.category === 'advertisement' ? 'Sponsored placement plan' : 'Verified provider listing'}</p>
+              <p className="mt-2 text-xs text-text-muted">{listing.category === 'advertisement' || isBillboard ? 'Sponsored placement plan' : 'Verified provider listing'}</p>
             </div>
 
             <div className="card space-y-2">
               <button
                 type="button"
-                onClick={() => { window.location.href = `tel:${listing.phone}`; }}
+                onClick={() => { window.location.href = `tel:${contactNumber}`; }}
                 className="btn-outline w-full inline-flex items-center justify-center gap-2 rounded-xl"
               >
                 <Phone size={16} /> Call
@@ -699,7 +744,7 @@ export default function ListingDetail() {
               <button
                 type="button"
                 onClick={() => {
-                  const waNumber = normalizeWhatsAppNumber(listing.phone, listing.whatsapp);
+                  const waNumber = normalizeWhatsAppNumber(contactNumber, whatsappNumber);
                   if (!waNumber) return;
                   window.open(`https://wa.me/${waNumber}`, '_blank', 'noopener,noreferrer');
                 }}

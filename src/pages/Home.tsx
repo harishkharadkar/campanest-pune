@@ -10,7 +10,7 @@ import { getOptimizedUrl } from '../lib/cloudinary';
 import { getListingPhotos } from '../lib/listingPhotos';
 import RatingStars from '../components/RatingStars';
 
-const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement'] as const;
+const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'] as const;
 const MENU_ITEMS_FETCH_LIMIT = 400;
 
 type FoodSearchResult = {
@@ -68,8 +68,13 @@ const getMapUrl = (listing: Listing) => {
     }
   }
 
-  const lat = listing.location?.lat;
-  const lng = listing.location?.lng;
+  const locationValue = listing.location;
+  if (typeof locationValue === 'string' && locationValue.trim()) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationValue.trim())}`;
+  }
+
+  const lat = typeof locationValue === 'object' ? locationValue?.lat : undefined;
+  const lng = typeof locationValue === 'object' ? locationValue?.lng : undefined;
   if (Number.isFinite(lat) && Number.isFinite(lng)) return `https://www.google.com/maps?q=${lat},${lng}`;
 
   return '';
@@ -94,6 +99,13 @@ const getStructuredItems = (listing: Listing) => {
 const getPrimaryPrice = (listing: Listing) => {
   const value = Number((listing as any).pricePerMonth || (listing as any).price || listing.pricePlan || 0);
   return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const getTrafficBadgeClass = (level: string) => {
+  if (level === 'Very High') return 'bg-red-500/20 text-red-300 border-red-500/40';
+  if (level === 'High') return 'bg-orange-500/20 text-orange-300 border-orange-500/40';
+  if (level === 'Medium') return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40';
+  return 'bg-green-500/20 text-green-300 border-green-500/40';
 };
 
 const SkeletonCard = () => (
@@ -227,6 +239,7 @@ export default function Home() {
     : (CATEGORY_DESCRIPTIONS[category] || '');
 
   const renderListingCard = (listing: Listing) => {
+    const isBillboard = listing.category === 'billboard' || String((listing as any).serviceType || '').toLowerCase() === 'billboard';
     const averageRating = Number(listing.avgRating ?? listing.averageRating ?? 0);
     const totalRatings = Math.max(0, Number(listing.totalRatings || 0));
     const totalViews = Number(listing.views ?? listing.totalViews ?? 0);
@@ -242,6 +255,8 @@ export default function Home() {
     const showItemsPreview = listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop';
     const price = getPrimaryPrice(listing);
     const tagLabel = CATEGORY_LABELS[listing.category] || listing.category;
+    const trafficLevel = String((listing as any).trafficLevel || 'Medium');
+    const billboardLocation = String((listing as any).location || listing.address || listing.name || '').trim();
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
@@ -283,12 +298,18 @@ export default function Home() {
         </div>
 
         <div className="p-4 border-t border-border">
-          <h3 className="text-lg font-bold leading-tight">{listing.name}</h3>
+          <h3 className="text-lg font-bold leading-tight">{isBillboard && billboardLocation ? billboardLocation : listing.name}</h3>
           <p className="text-sm text-text-muted flex items-center gap-1 mt-2">
             <MapPin size={14} />
             {listing.area}
             {listing.nearCollege ? ` • Near ${listing.nearCollege}` : ''}
           </p>
+          {isBillboard && (
+            <div className="mt-3 flex items-center flex-wrap gap-2">
+              <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold border border-border bg-surface-elevated text-text">{listing.area}</span>
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border ${getTrafficBadgeClass(trafficLevel)}`}>{trafficLevel}</span>
+            </div>
+          )}
           <div className="mt-3 flex items-center flex-wrap gap-3 text-sm text-text-muted">
             <RatingStars avgRating={averageRating} totalRatings={totalRatings} size={14} />
             <span className="inline-flex items-center gap-1">

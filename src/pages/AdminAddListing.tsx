@@ -7,8 +7,9 @@ import { db } from '../lib/firebase';
 import { AREAS, CATEGORY_LABELS, PRICING } from '../constants';
 import { useToast } from '../components/Toast';
 import MenuItemInput, { DraftMenuItem } from '../components/MenuItemInput';
-import { Listing, ListingCategory, ListingPlanType, MenuItem, ServiceType } from '../types';
+import { Listing, ListingCategory, ListingPlanType, MenuItem, MessMenuType, ServiceType } from '../types';
 import { getListingPhotos } from '../lib/listingPhotos';
+import { normalizeDailyMenu, normalizeWeeklyMenu, toLocalDateKey, WEEK_DAYS } from '../lib/messMenu';
 
 const CATEGORIES: ListingCategory[] = [
   'pg', 'hostel', 'flat', 'mess', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'secondhand', 'advertisement', 'billboard'
@@ -44,6 +45,11 @@ type LocalMenuItem = {
   category: 'Thali' | 'Combo' | 'Main' | 'Other';
   servingDetails?: string;
 };
+
+const DEFAULT_WEEKLY_MENU = WEEK_DAYS.reduce((acc, day) => {
+  acc[day] = { morning: '', evening: '' };
+  return acc;
+}, {} as Record<string, { morning: string; evening: string }>);
 
 const normalizeMenuItems = (items: Partial<MenuItem>[] = []): LocalMenuItem[] => {
   return items
@@ -208,6 +214,12 @@ export default function AdminAddListing() {
   const [adDuration, setAdDuration] = useState(7);
   const [initialListing, setInitialListing] = useState<Partial<Listing> | null>(null);
   const [menuItems, setMenuItems] = useState<LocalMenuItem[]>([]);
+  const [menuType, setMenuType] = useState<MessMenuType>('fixed');
+  const [weeklyMenuDraft, setWeeklyMenuDraft] = useState<Record<string, { morning: string; evening: string }>>({ ...DEFAULT_WEEKLY_MENU });
+  const [dailyMenuDraft, setDailyMenuDraft] = useState<Record<string, { morning: string; evening: string }>>({});
+  const [dailyMenuDate, setDailyMenuDate] = useState(toLocalDateKey());
+  const [dailyMenuMorning, setDailyMenuMorning] = useState('');
+  const [dailyMenuEvening, setDailyMenuEvening] = useState('');
   const [formVersion, setFormVersion] = useState(0);
 
   const planPreview = useMemo(() => buildPlan(category, adDuration), [category, adDuration]);
@@ -221,6 +233,12 @@ export default function AdminAddListing() {
         setCategory('mess');
         setAdDuration(7);
         setMenuItems([]);
+        setMenuType('fixed');
+        setWeeklyMenuDraft({ ...DEFAULT_WEEKLY_MENU });
+        setDailyMenuDraft({});
+        setDailyMenuDate(toLocalDateKey());
+        setDailyMenuMorning('');
+        setDailyMenuEvening('');
         setPhotoUrls([...EMPTY_PHOTO_INPUTS]);
         setImageInputStatus(['idle', 'idle', 'idle', 'idle', 'idle']);
         setFormVersion((prev) => prev + 1);
@@ -240,6 +258,15 @@ export default function AdminAddListing() {
 
         const data = snap.data() as Partial<Listing>;
         setInitialListing(data);
+        setMenuType((String((data as any).menuType || '').toLowerCase() === 'daily') ? 'daily' : 'fixed');
+        setWeeklyMenuDraft(normalizeWeeklyMenu((data as any).weeklyMenu));
+        const loadedDailyMenu = normalizeDailyMenu((data as any).dailyMenu);
+        setDailyMenuDraft(loadedDailyMenu);
+        const todayKey = toLocalDateKey();
+        const todaySlot = loadedDailyMenu[todayKey] || { morning: '', evening: '' };
+        setDailyMenuDate(todayKey);
+        setDailyMenuMorning(todaySlot.morning);
+        setDailyMenuEvening(todaySlot.evening);
         const existingPhotos = getListingImages(data).slice(0, MAX_PHOTOS);
         const nextInputs = [...EMPTY_PHOTO_INPUTS];
         existingPhotos.forEach((url, index) => {
@@ -319,6 +346,53 @@ export default function AdminAddListing() {
 
   const removeMenuItem = (index: number) => {
     setMenuItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateWeeklyMenuValue = (day: string, slot: 'morning' | 'evening', value: string) => {
+    setWeeklyMenuDraft((prev) => ({
+      ...prev,
+      [day]: {
+        ...(prev[day] || { morning: '', evening: '' }),
+        [slot]: value
+      }
+    }));
+  };
+
+  const selectDailyMenuDate = (date: string) => {
+    const nextDate = String(date || '').trim();
+    setDailyMenuDate(nextDate);
+    const slot = dailyMenuDraft[nextDate] || { morning: '', evening: '' };
+    setDailyMenuMorning(slot.morning);
+    setDailyMenuEvening(slot.evening);
+  };
+
+  const upsertDailyMenuDraft = async () => {
+    const date = String(dailyMenuDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      showToast('Select a valid date for daily menu', 'error');
+      return;
+    }
+    const nextSlot = {
+      morning: String(dailyMenuMorning || '').trim(),
+      evening: String(dailyMenuEvening || '').trim()
+    };
+    setDailyMenuDraft((prev) => ({ ...prev, [date]: nextSlot }));
+
+    if (isEditMode) {
+      try {
+        await updateDoc(doc(db, 'listings', editId), {
+          menuType: 'daily',
+          [`dailyMenu.${date}`]: nextSlot,
+          lastUpdated: serverTimestamp(),
+          updatedAt: new Date().toISOString()
+        });
+        showToast('Daily menu updated', 'success');
+      } catch (error: any) {
+        showToast(error?.message || 'Failed to update daily menu', 'error');
+      }
+    } else {
+      showToast('Daily menu saved in draft. Click Save Listing to persist.', 'success');
+    }
   };
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -432,15 +506,29 @@ export default function AdminAddListing() {
         listing.monthlyRate = getNum('monthlyRate');
         listing.weeklyRate = getNum('weeklyRate');
         listing.perPlateRate = getNum('perPlateRate');
-        listing.weeklyMenu = {
-          monday: getText('menuMonday'),
-          tuesday: getText('menuTuesday'),
-          wednesday: getText('menuWednesday'),
-          thursday: getText('menuThursday'),
-          friday: getText('menuFriday'),
-          saturday: getText('menuSaturday'),
-          sunday: getText('menuSunday')
-        };
+        listing.menuType = menuType;
+        if (menuType === 'fixed') {
+          listing.weeklyMenu = WEEK_DAYS.reduce((acc, day) => {
+            const slot = weeklyMenuDraft[day] || { morning: '', evening: '' };
+            acc[day] = {
+              morning: String(slot.morning || '').trim(),
+              evening: String(slot.evening || '').trim()
+            };
+            return acc;
+          }, {} as Record<string, { morning: string; evening: string }>);
+          listing.dailyMenu = isEditMode ? deleteField() : {};
+        } else {
+          listing.dailyMenu = Object.entries(dailyMenuDraft).reduce((acc, [date, slot]) => {
+            const key = String(date || '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return acc;
+            acc[key] = {
+              morning: String(slot?.morning || '').trim(),
+              evening: String(slot?.evening || '').trim()
+            };
+            return acc;
+          }, {} as Record<string, { morning: string; evening: string }>);
+          listing.weeklyMenu = isEditMode ? deleteField() : {};
+        }
         listing.specialOccasionOffer = getText('specialOccasionOffer');
         listing.unlimitedAvailable = formData.get('unlimitedAvailable') === 'on';
         listing.unlimitedPrice = getNum('unlimitedPrice');
@@ -645,7 +733,9 @@ export default function AdminAddListing() {
   };
 
   const initialName = (initialListing?.name || initialListing?.title || initialListing?.itemName || '') as string;
-  const initialMenu = initialListing?.weeklyMenu || {};
+  const recentDailyEntries = Object.entries(dailyMenuDraft)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 7);
 
   return (
     <div className="min-h-screen pb-24">
@@ -706,13 +796,118 @@ export default function AdminAddListing() {
               <input name="monthlyRate" type="number" placeholder="Monthly Rate" className="input-field" defaultValue={initialListing?.monthlyRate || ''} />
               <input name="weeklyRate" type="number" placeholder="Weekly Rate" className="input-field" defaultValue={initialListing?.weeklyRate || ''} />
               <input name="perPlateRate" type="number" placeholder="Per Plate Rate" className="input-field" defaultValue={initialListing?.perPlateRate || ''} />
-              <input name="menuMonday" placeholder="Monday menu" className="input-field" defaultValue={initialMenu.monday || initialMenu.Monday || ''} />
-              <input name="menuTuesday" placeholder="Tuesday menu" className="input-field" defaultValue={initialMenu.tuesday || initialMenu.Tuesday || ''} />
-              <input name="menuWednesday" placeholder="Wednesday menu" className="input-field" defaultValue={initialMenu.wednesday || initialMenu.Wednesday || ''} />
-              <input name="menuThursday" placeholder="Thursday menu" className="input-field" defaultValue={initialMenu.thursday || initialMenu.Thursday || ''} />
-              <input name="menuFriday" placeholder="Friday menu" className="input-field" defaultValue={initialMenu.friday || initialMenu.Friday || ''} />
-              <input name="menuSaturday" placeholder="Saturday menu" className="input-field" defaultValue={initialMenu.saturday || initialMenu.Saturday || ''} />
-              <input name="menuSunday" placeholder="Sunday menu" className="input-field" defaultValue={initialMenu.sunday || initialMenu.Sunday || ''} />
+              <div className="rounded-xl border border-border bg-[#12121A] p-4 space-y-3">
+                <h4 className="font-semibold text-sm">Menu Type</h4>
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="menuType"
+                      value="fixed"
+                      checked={menuType === 'fixed'}
+                      onChange={() => setMenuType('fixed')}
+                    />
+                    <span>Fixed Weekly Menu</span>
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="menuType"
+                      value="daily"
+                      checked={menuType === 'daily'}
+                      onChange={() => setMenuType('daily')}
+                    />
+                    <span>Daily Changing Menu</span>
+                  </label>
+                </div>
+              </div>
+
+              {menuType === 'fixed' ? (
+                <div className="rounded-xl border border-border bg-[#12121A] p-4 space-y-3">
+                  <h4 className="font-semibold text-sm">Fixed Weekly Menu</h4>
+                  <div className="space-y-2">
+                    {WEEK_DAYS.map((day) => (
+                      <div key={day} className="grid grid-cols-1 md:grid-cols-3 gap-2 items-center">
+                        <p className="text-xs font-semibold text-text-muted uppercase tracking-[0.08em]">{day}</p>
+                        <input
+                          type="text"
+                          value={weeklyMenuDraft[day]?.morning || ''}
+                          onChange={(event) => updateWeeklyMenuValue(day, 'morning', event.target.value)}
+                          placeholder="Morning: e.g. Poha, Chai, Banana"
+                          className="input-field text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={weeklyMenuDraft[day]?.evening || ''}
+                          onChange={(event) => updateWeeklyMenuValue(day, 'evening', event.target.value)}
+                          placeholder="Evening: e.g. Dal Rice, Sabzi, Salad"
+                          className="input-field text-sm"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-[#12121A] p-4 space-y-3">
+                  <h4 className="font-semibold text-sm">Daily Changing Menu</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input
+                      type="date"
+                      value={dailyMenuDate}
+                      onChange={(event) => selectDailyMenuDate(event.target.value)}
+                      className="input-field text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={dailyMenuMorning}
+                      onChange={(event) => setDailyMenuMorning(event.target.value)}
+                      placeholder="Morning: e.g. Poha, Chai, Banana"
+                      className="input-field text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={dailyMenuEvening}
+                      onChange={(event) => setDailyMenuEvening(event.target.value)}
+                      placeholder="Evening: e.g. Dal Rice, Sabzi, Salad"
+                      className="input-field text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void upsertDailyMenuDraft()}
+                      className="btn-outline text-xs px-3 py-2"
+                    >
+                      Update Today&apos;s Menu
+                    </button>
+                    <p className="text-xs text-text-muted">Saves daily entry for selected date.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">Last 7 Days</p>
+                    {recentDailyEntries.length === 0 ? (
+                      <p className="text-xs text-text-muted">No daily entries yet.</p>
+                    ) : (
+                      recentDailyEntries.map(([date, slot]) => (
+                        <div key={date} className="rounded-lg border border-border px-3 py-2 bg-[#151523]">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-semibold text-text">{date}</p>
+                            <button
+                              type="button"
+                              className="text-xs text-primary"
+                              onClick={() => selectDailyMenuDate(date)}
+                            >
+                              Edit
+                            </button>
+                          </div>
+                          <p className="text-xs text-text-muted mt-1">Morning: {String(slot.morning || '').trim() || 'Not set'}</p>
+                          <p className="text-xs text-text-muted">Evening: {String(slot.evening || '').trim() || 'Not set'}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
               <input name="specialOccasionOffer" placeholder="Special Occasion Offer" className="input-field" defaultValue={initialListing?.specialOccasionOffer || ''} />
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="unlimitedAvailable" defaultChecked={Boolean(initialListing?.unlimitedAvailable)} /> Unlimited Available</label>
               <input name="unlimitedPrice" type="number" placeholder="Unlimited Price" className="input-field" defaultValue={initialListing?.unlimitedPrice || ''} />

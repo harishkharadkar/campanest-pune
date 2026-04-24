@@ -28,6 +28,7 @@ export type ListingCategory =
 
 export type ServiceType = ListingCategory | 'blockrent' | 'avashyakta' | 'newopening';
 export type ListingPlanType = 'monthly' | 'perPost' | 'ad';
+export type MessMenuType = 'fixed' | 'daily';
 
 export type MenuItemType = 'Veg' | 'Non-Veg';
 export type MenuItemCategory = 'Thali' | 'Combo' | 'Main' | 'Other' | 'food' | 'shop';
@@ -123,22 +124,15 @@ export interface Listing {
   monthlyRate?: number;
   weeklyRate?: number;
   perPlateRate?: number;
-  weeklyMenu?: {
-    monday?: string;
-    tuesday?: string;
-    wednesday?: string;
-    thursday?: string;
-    friday?: string;
-    saturday?: string;
-    sunday?: string;
-    Monday?: string;
-    Tuesday?: string;
-    Wednesday?: string;
-    Thursday?: string;
-    Friday?: string;
-    Saturday?: string;
-    Sunday?: string;
-  };
+  menuType?: MessMenuType;
+  weeklyMenu?: Record<string, {
+    morning?: string;
+    evening?: string;
+  } | string>;
+  dailyMenu?: Record<string, {
+    morning?: string;
+    evening?: string;
+  }>;
   
   // Block Rent specific
   blockType?: string;

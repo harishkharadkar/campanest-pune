@@ -10,26 +10,12 @@ import { CATEGORY_LABELS } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { getOptimizedUrl } from '../lib/cloudinary';
 import { getListingPhotos } from '../lib/listingPhotos';
+import { getRecentDailyMenuEntries, getResolvedMenuType, getTodayMessMenu, normalizeWeeklyMenu, toLocalDateKey, WEEK_DAYS } from '../lib/messMenu';
 
 const normalizeWhatsAppNumber = (phone?: string, whatsapp?: string) => {
   const raw = (whatsapp || phone || '').replace(/\D/g, '');
   if (!raw) return '';
   return raw.startsWith('91') ? raw : `91${raw}`;
-};
-
-const dayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
-
-const formatMenuItems = (value?: string) => {
-  return String(value || '')
-    .split(/\r?\n|,|•|·|\|/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-};
-
-const getMenuForDay = (listing: Listing, dayLower: string) => {
-  const menu = listing.weeklyMenu || {};
-  const titleCase = dayLower.charAt(0).toUpperCase() + dayLower.slice(1);
-  return String(menu[dayLower as keyof typeof menu] || menu[titleCase as keyof typeof menu] || '');
 };
 
 const toSafeDate = (value: any) => {
@@ -91,8 +77,6 @@ const getPrimaryPrice = (listing: Listing) => {
   const value = Number((listing as any).pricePerMonth || (listing as any).price || listing.pricePlan || 0);
   return Number.isFinite(value) && value > 0 ? value : null;
 };
-
-const roundToOneDecimal = (value: number) => Number(value.toFixed(1));
 
 const getViewedListingIds = (): string[] => {
   try {
@@ -285,11 +269,16 @@ export default function ListingDetail() {
   if (!listing) return <div className="h-screen flex items-center justify-center text-text-muted">Listing not found.</div>;
 
   const isExpired = listing.validUntil?.toDate?.()?.getTime?.() ? listing.validUntil.toDate().getTime() < Date.now() : false;
-  const todayLower = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date()).toLowerCase();
-  const todayTitle = todayLower.charAt(0).toUpperCase() + todayLower.slice(1);
-  const todayMenuItems = formatMenuItems(getMenuForDay(listing, todayLower));
+  const today = new Date();
+  const todayDayName = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(today);
+  const todayDateLabel = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(today);
+  const todayDateKey = toLocalDateKey(today);
+  const isMessListing = listing.category === 'mess' || String((listing as any).serviceType || '').toLowerCase() === 'mess';
+  const resolvedMessMenuType = isMessListing ? getResolvedMenuType(listing) : 'fixed';
+  const todayMessMenu = isMessListing ? getTodayMessMenu(listing, today) : { morning: '', evening: '' };
+  const weeklyMenuRows = normalizeWeeklyMenu((listing as any).weeklyMenu);
+  const recentDailyRows = getRecentDailyMenuEntries(listing, 7);
   const normalizedMenuItems = menuItems.filter((item) => item.itemName && Number.isFinite(Number(item.price)));
-  const todayMenuFromItems = normalizedMenuItems.slice(0, 8);
   const structuredItems = getStructuredListingItems(listing, normalizedMenuItems);
 
   const displayedAverageRating = Math.min(5, Math.max(0, Number(listing.avgRating ?? listing.averageRating ?? 0)));
@@ -316,6 +305,7 @@ export default function ListingDetail() {
     || 'Do not make any advance payment without verifying the service in person. CampaNest is not responsible for financial transactions.'
   );
   const price = getPrimaryPrice(listing);
+  const ratingLabels = ['', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent'];
 
   const breakdownTotal = ratingsBreakdown.reduce((sum, current) => sum + current, 0);
   const getPercentage = (count: number) => (breakdownTotal === 0 ? 0 : Math.round((count / breakdownTotal) * 100));
@@ -579,7 +569,7 @@ export default function ListingDetail() {
               </div>
             )}
 
-            {(listing.category === 'mess' || listing.category === 'hotel' || listing.category === 'shop') && (
+            {(listing.category === 'hotel' || listing.category === 'shop') && (
               <div className="card">
                 <h3 className="text-xl">{listing.category === 'shop' ? 'Items' : 'Menu'} </h3>
                 {loadingMenuItems ? (
@@ -601,43 +591,78 @@ export default function ListingDetail() {
                 )}
               </div>
             )}
-
-            {listing.category === 'mess' && (
-              <div className="card space-y-4">
-                <div>
-                  <h3 className="text-xl">Today&apos;s Menu</h3>
-                  <p className="text-xs text-text-muted mt-1">{todayTitle}</p>
-                  {todayMenuFromItems.length > 0 ? (
-                    <ul className="mt-3 space-y-1 text-sm text-text-muted">
-                      {todayMenuFromItems.map((item) => <li key={item.id || item.itemName}>• {item.itemName}</li>)}
-                    </ul>
-                  ) : todayMenuItems.length > 0 ? (
-                    <ul className="mt-3 space-y-1 text-sm text-text-muted">
-                      {todayMenuItems.map((item) => <li key={item}>• {item}</li>)}
-                    </ul>
+            {isMessListing && (
+              <div className="space-y-4">
+                <div className="card border border-[#2A2A3D] bg-[#12121A] rounded-2xl">
+                  <h3 className="text-xl inline-flex items-center gap-2">{'\uD83D\uDCC5'} Today&apos;s Menu</h3>
+                  <p className="text-xs text-text-muted mt-1">{todayDateLabel}</p>
+                  {(todayMessMenu.morning || todayMessMenu.evening) ? (
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-4 py-3">
+                        <p className="text-sm font-semibold text-[#F59E0B]">{'\uD83C\uDF05'} Morning</p>
+                        <p className="text-sm text-text mt-1">{todayMessMenu.morning || 'Not updated yet'}</p>
+                      </div>
+                      <div className="rounded-xl border border-[#6C63FF]/40 bg-[#6C63FF]/10 px-4 py-3">
+                        <p className="text-sm font-semibold text-[#6C63FF]">{'\uD83C\uDF06'} Evening</p>
+                        <p className="text-sm text-text mt-1">{todayMessMenu.evening || 'Not updated yet'}</p>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="mt-3 text-sm text-text-muted">Menu not shared for today.</p>
+                    <p className="mt-3 text-sm text-text-muted">Menu not updated yet</p>
+                  )}
+                </div>
+
+                <div className="card space-y-3">
+                  <h4 className="font-bold text-sm">
+                    {resolvedMessMenuType === 'fixed' ? 'Full Weekly Menu' : 'Last 7 Days Menu'}
+                  </h4>
+                  {resolvedMessMenuType === 'fixed' ? (
+                    <div className="space-y-2">
+                      {WEEK_DAYS.map((day) => {
+                        const row = weeklyMenuRows[day] || { morning: '', evening: '' };
+                        const isToday = day === todayDayName;
+                        return (
+                          <div
+                            key={day}
+                            className={`rounded-xl border px-3 py-2 ${isToday ? 'border-[#FF7A00] bg-[#1A1A28]' : 'border-border bg-surface-elevated'}`}
+                          >
+                            <p className="text-xs tag-label text-primary">{day}</p>
+                            <p className="text-xs text-text-muted mt-1">{'\uD83C\uDF05'} Morning: {row.morning || 'Not set'}</p>
+                            <p className="text-xs text-text-muted">{'\uD83C\uDF06'} Evening: {row.evening || 'Not set'}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {recentDailyRows.length === 0 ? (
+                        <p className="text-sm text-text-muted">Menu not updated yet</p>
+                      ) : (
+                        recentDailyRows.map((entry) => {
+                          const isToday = entry.date === todayDateKey;
+                          return (
+                            <div
+                              key={entry.date}
+                              className={`rounded-xl border px-3 py-2 ${isToday ? 'border-[#FF7A00] bg-[#1A1A28]' : 'border-border bg-surface-elevated'}`}
+                            >
+                              <p className="text-xs tag-label text-primary">{entry.date}</p>
+                              <p className="text-xs text-text-muted mt-1">{'\uD83C\uDF05'} Morning: {entry.morning || 'Not set'}</p>
+                              <p className="text-xs text-text-muted">{'\uD83C\uDF06'} Evening: {entry.evening || 'Not set'}</p>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Monthly: {listing.monthlyRate ? `₹${listing.monthlyRate}` : 'N/A'}</p>
-                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Weekly: {listing.weeklyRate ? `₹${listing.weeklyRate}` : 'N/A'}</p>
-                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Per Plate: {listing.perPlateRate ? `₹${listing.perPlateRate}` : 'N/A'}</p>
-                </div>
-
-                <div className="space-y-2">
-                  <h4 className="font-bold text-sm">Weekly Menu</h4>
-                  {dayOrder.map((day) => (
-                    <div key={day} className="rounded-xl border border-border bg-surface-elevated px-3 py-2">
-                      <p className="text-xs tag-label text-primary capitalize">{day}</p>
-                      <p className="text-xs text-text-muted mt-1">{getMenuForDay(listing, day) || 'Not available'}</p>
-                    </div>
-                  ))}
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Monthly: {listing.monthlyRate ? `\u20B9${listing.monthlyRate}` : 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Weekly: {listing.weeklyRate ? `\u20B9${listing.weeklyRate}` : 'N/A'}</p>
+                  <p className="rounded-xl border border-border bg-surface-elevated px-3 py-2">Per Plate: {listing.perPlateRate ? `\u20B9${listing.perPlateRate}` : 'N/A'}</p>
                 </div>
               </div>
             )}
-
             {(listing.category === 'pg' || listing.category === 'hostel' || listing.category === 'flat') && (
               <div className="card">
                 <h3 className="text-xl">Amenities & Stay Details</h3>
@@ -656,11 +681,59 @@ export default function ListingDetail() {
               <h3 className="text-xl">Description</h3>
               <p className="mt-3 text-sm text-text-muted leading-relaxed">{listing.description}</p>
             </div>
-
             <div className="card" ref={ratingsSectionRef}>
               <h3 className="text-xl">Ratings & Reviews</h3>
-              <div className="mt-4">
-                <RatingStars avgRating={displayedAverageRating} totalRatings={displayedTotalRatings} size={20} />
+              <div
+                className="mt-4"
+                style={{
+                  background: 'linear-gradient(135deg, #12121A, #1A1A28)',
+                  border: '1px solid #2A2A3D',
+                  borderRadius: '16px',
+                  padding: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '24px',
+                  marginBottom: '16px'
+                }}
+              >
+                <div style={{ textAlign: 'center', minWidth: '80px' }}>
+                  <div
+                    style={{
+                      fontSize: '52px',
+                      fontWeight: 800,
+                      color: '#F59E0B',
+                      lineHeight: 1,
+                      filter: 'drop-shadow(0 0 12px rgba(245,158,11,0.4))'
+                    }}
+                  >
+                    {displayedAverageRating.toFixed(1)}
+                  </div>
+                  <div style={{ color: '#9090AA', fontSize: '12px', marginTop: '4px' }}>
+                    out of 5
+                  </div>
+                </div>
+                <div style={{ width: '1px', height: '60px', background: '#2A2A3D' }} />
+                <div>
+                  <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <span
+                        key={star}
+                        style={{
+                          fontSize: '22px',
+                          color: star <= Math.round(displayedAverageRating) ? '#F59E0B' : '#2A2A3D',
+                          filter: star <= Math.round(displayedAverageRating)
+                            ? 'drop-shadow(0 0 4px rgba(245,158,11,0.5))'
+                            : 'none'
+                        }}
+                      >
+                        {'\u2605'}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ color: '#9090AA', fontSize: '13px' }}>
+                    Based on {displayedTotalRatings} rating{displayedTotalRatings !== 1 ? 's' : ''}
+                  </div>
+                </div>
               </div>
 
               <div className="mt-4 space-y-3">
@@ -669,7 +742,7 @@ export default function ListingDetail() {
                   const percentage = getPercentage(count);
                   return (
                     <div key={star} className="grid grid-cols-[40px_minmax(0,1fr)_44px] items-center gap-3 text-xs text-text-muted">
-                      <span>{star}★</span>
+                      <span>{star}{'\u2605'}</span>
                       <div className="rating-bar-track">
                         <div className="rating-bar-fill" style={{ width: animateBars ? `${percentage}%` : '0%' }} />
                       </div>
@@ -680,56 +753,83 @@ export default function ListingDetail() {
               </div>
 
               <div className="mt-5">
-                <p className="text-xs text-text-muted mb-2">
-                  {userRating > 0 ? `Your rating: ${userRating} star${userRating > 1 ? 's' : ''} (tap to update)` : 'Rate this listing'}
-                </p>
-                <div className="flex items-center gap-1" style={{ cursor: 'pointer' }}>
-                  {authLoading ? (
-                    <p className="text-xs text-text-muted">Checking login status...</p>
-                  ) : user ? (
-                    [1, 2, 3, 4, 5].map((star) => (
-                      <span
-                        key={star}
-                        onMouseEnter={() => setHoverRating(star)}
-                        onMouseLeave={() => setHoverRating(0)}
-                        onClick={() => {
-                          if (submittingRating) return;
-                          void handleRate(star);
-                        }}
-                        style={{
-                          fontSize: '32px',
-                          lineHeight: '1',
-                          color: star <= (hoverRating || userRating) ? '#F59E0B' : '#444455',
-                          transition: 'color 100ms ease',
-                          userSelect: 'none',
-                          WebkitUserSelect: 'none',
-                          opacity: submittingRating ? 0.6 : 1
-                        }}
-                        aria-label={`Rate ${star}`}
-                        role="button"
-                      >
-                        ★
+                <div
+                  style={{
+                    background: 'linear-gradient(135deg, #12121A, #1A1A28)',
+                    border: '1px solid #2A2A3D',
+                    borderRadius: '16px',
+                    padding: '24px'
+                  }}
+                >
+                  <h4
+                    style={{
+                      color: '#F0F0FF',
+                      fontSize: '16px',
+                      fontWeight: 600,
+                      marginBottom: '16px'
+                    }}
+                  >
+                    Rate This Listing
+                  </h4>
+
+                  <div style={{ display: 'flex', gap: '10px', cursor: 'pointer' }}>
+                    {authLoading ? (
+                      <p className="text-xs text-text-muted">Checking login status...</p>
+                    ) : user ? (
+                      [1, 2, 3, 4, 5].map((star) => (
+                        <span
+                          key={star}
+                          onMouseEnter={() => setHoverRating(star)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          onClick={() => {
+                            if (submittingRating) return;
+                            void handleRate(star);
+                          }}
+                          style={{
+                            fontSize: '40px',
+                            cursor: 'pointer',
+                            color: star <= (hoverRating || userRating) ? '#F59E0B' : '#2A2A3D',
+                            filter: star <= (hoverRating || userRating) ? 'drop-shadow(0 0 8px rgba(245,158,11,0.6))' : 'none',
+                            transform: star <= hoverRating
+                              ? 'scale(1.2)'
+                              : 'scale(1)',
+                            transition: 'all 150ms ease',
+                            userSelect: 'none',
+                            WebkitUserSelect: 'none',
+                            display: 'inline-block',
+                            opacity: submittingRating ? 0.6 : 1
+                          }}
+                          aria-label={`Rate ${star}`}
+                          role="button"
+                        >{'\u2605'}</span>
+                      ))
+                    ) : (
+                      <p className="text-sm text-text-muted">
+                        Please <Link to="/login" className="text-primary">login</Link> to rate
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: '12px', minHeight: '20px' }}>
+                    {hoverRating > 0 && (
+                      <span style={{ color: '#F59E0B', fontSize: '14px', fontWeight: 600 }}>
+                        {ratingLabels[hoverRating]}
                       </span>
-                    ))
-                  ) : (
-                    <p className="text-sm text-text-muted">
-                      Please <Link to="/login" className="text-primary">login</Link> to rate
-                    </p>
-                  )}
+                    )}
+                    {user && hasRated && hoverRating === 0 && (
+                      <span style={{ color: '#22C55E', fontSize: '13px' }}>
+                        {'\u2713'} You rated this {userRating}/5 - {ratingLabels[userRating]}
+                      </span>
+                    )}
+                    {!user && !authLoading && (
+                      <p style={{ color: '#9090AA', fontSize: '13px', marginTop: '8px' }}>
+                        Please login to rate this listing
+                      </p>
+                    )}
+                  </div>
                 </div>
-                {user && hasRated && (
-                  <p style={{ color: '#22C55E', fontSize: '13px', marginTop: '8px' }}>
-                    ✓ You rated this {userRating} / 5
-                  </p>
-                )}
-                {!user && (
-                  <p style={{ color: '#9090AA', fontSize: '13px', marginTop: '8px' }}>
-                    Please login to rate this listing
-                  </p>
-                )}
               </div>
             </div>
-
             {similarListings.length > 0 && (
               <div className="card">
                 <h3 className="text-xl">Similar Listings</h3>
@@ -827,4 +927,8 @@ export default function ListingDetail() {
     </div>
   );
 }
+
+
+
+
 

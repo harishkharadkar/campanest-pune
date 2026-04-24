@@ -9,6 +9,7 @@ import { useToast } from '../components/Toast';
 import { getOptimizedUrl } from '../lib/cloudinary';
 import { getListingPhotos } from '../lib/listingPhotos';
 import RatingStars from '../components/RatingStars';
+import { getTodayMessMenu } from '../lib/messMenu';
 
 const CATEGORIES = ['all', 'pg', 'hostel', 'mess', 'flat', 'shop', 'hotel', 'block', 'doctor', 'requirement', 'advertisement', 'billboard', 'secondhand'] as const;
 const MENU_ITEMS_FETCH_LIMIT = 400;
@@ -261,6 +262,11 @@ export default function Home() {
     const billboardSize = String((listing as any).size || '').trim();
     const adTitle = String((listing as any).title || listing.name || '').trim();
     const adDescription = String(listing.description || '').trim();
+    const isMess = listing.category === 'mess' || String((listing as any).serviceType || '').toLowerCase() === 'mess';
+    const todayMessMenu = isMess ? getTodayMessMenu(listing) : { morning: '', evening: '' };
+    const menuPreview = (todayMessMenu.morning || todayMessMenu.evening)
+      ? `\uD83C\uDF05 ${todayMessMenu.morning || 'Not updated'}   \uD83C\uDF06 ${todayMessMenu.evening || 'Not updated'}`
+      : 'Menu updated daily';
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
@@ -316,6 +322,9 @@ export default function Home() {
           </p>
           {isAdvertisement && adDescription && (
             <p className="mt-2 text-sm text-text-muted line-clamp-2">{adDescription}</p>
+          )}
+          {isMess && (
+            <p className="mt-2 text-xs text-text-muted line-clamp-2">{menuPreview}</p>
           )}
           {isBillboard && (
             <div className="mt-3 flex items-center flex-wrap gap-2">

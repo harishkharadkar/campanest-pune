@@ -33,9 +33,9 @@ const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   newopening: 'New Opening'
 };
 const FOOD_AND_SHOP_CATEGORIES: ListingCategory[] = ['mess', 'hotel', 'shop'];
-const MAX_PHOTOS = 5;
-const IMAGE_INPUT_LABELS = ['Image 1 (Main)', 'Image 2', 'Image 3', 'Image 4', 'Image 5'];
-const EMPTY_PHOTO_INPUTS = ['', '', '', '', ''];
+const MAX_PHOTOS = 10;
+const IMAGE_INPUT_LABELS = Array.from({ length: MAX_PHOTOS }, (_, index) => (index === 0 ? 'Image 1 (Main)' : `Image ${index + 1}`));
+const EMPTY_PHOTO_INPUTS = Array.from({ length: MAX_PHOTOS }, () => '');
 type ImageInputStatus = 'idle' | 'loading' | 'success' | 'error';
 
 type LocalMenuItem = {
@@ -207,7 +207,7 @@ export default function AdminAddListing() {
   const isEditMode = Boolean(editId);
 
   const [photoUrls, setPhotoUrls] = useState<string[]>([...EMPTY_PHOTO_INPUTS]);
-  const [imageInputStatus, setImageInputStatus] = useState<ImageInputStatus[]>(['idle', 'idle', 'idle', 'idle', 'idle']);
+  const [imageInputStatus, setImageInputStatus] = useState<ImageInputStatus[]>(EMPTY_PHOTO_INPUTS.map(() => 'idle'));
   const [saving, setSaving] = useState(false);
   const [loadingListing, setLoadingListing] = useState(false);
   const [category, setCategory] = useState<ListingCategory>('mess');
@@ -240,7 +240,7 @@ export default function AdminAddListing() {
         setDailyMenuMorning('');
         setDailyMenuEvening('');
         setPhotoUrls([...EMPTY_PHOTO_INPUTS]);
-        setImageInputStatus(['idle', 'idle', 'idle', 'idle', 'idle']);
+        setImageInputStatus(EMPTY_PHOTO_INPUTS.map(() => 'idle'));
         setFormVersion((prev) => prev + 1);
         return;
       }
@@ -411,26 +411,6 @@ export default function AdminAddListing() {
       const parsedLocation = parseLocationCoordinates(getText('locationCoordinates'));
       const closedTillRaw = getText('closedTill');
       const nextPhotoUrls = photoUrls.map((url) => String(url || '').trim()).slice(0, MAX_PHOTOS);
-      const isActiveListing = formData.get('active') === 'on';
-
-      if (!nextPhotoUrls[0]) {
-        setPhotoInputStatus(0, 'error');
-        showToast('Main image URL is required', 'error');
-        setSaving(false);
-        return;
-      }
-
-      if (isActiveListing) {
-        const missingRequired = [1, 2, 3].some((index) => !nextPhotoUrls[index]);
-        if (missingRequired) {
-          [1, 2, 3].forEach((index) => {
-            if (!nextPhotoUrls[index]) setPhotoInputStatus(index, 'error');
-          });
-          showToast('Images 2-4 are required for active listings', 'error');
-          setSaving(false);
-          return;
-        }
-      }
 
       const enteredUrlIndexes = nextPhotoUrls
         .map((url, index) => ({ url, index }))
@@ -1158,7 +1138,7 @@ export default function AdminAddListing() {
               <p>2. Click on any uploaded image</p>
               <p>3. Click &quot;Copy URL&quot; or right-click image → Copy image address</p>
               <p>4. Paste the URL in the field below</p>
-              <p className="mt-1 text-zinc-400">Image 1 is mandatory. Images 2-4 are required when listing is Active.</p>
+              <p className="mt-1 text-zinc-400">You can add up to 10 images. Photos are optional.</p>
             </div>
 
             {IMAGE_INPUT_LABELS.map((label, index) => (
@@ -1167,7 +1147,6 @@ export default function AdminAddListing() {
                 label={label}
                 value={photoUrls[index] || ''}
                 status={imageInputStatus[index] || 'idle'}
-                required={index < 4}
                 isMain={index === 0}
                 onChange={(nextValue) => setPhotoInput(index, nextValue)}
                 onLoad={() => setPhotoInputStatus(index, 'success')}

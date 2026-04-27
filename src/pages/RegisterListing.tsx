@@ -314,7 +314,7 @@ export default function RegisterListing() {
           <div className="grid grid-cols-3 gap-2">
             {photos.map((photo, i) => (
               <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-zinc-800">
-                <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-full object-cover" />
+                <img src={URL.createObjectURL(photo)} alt="Preview" className="w-full h-auto object-contain max-h-[300px]" />
                 <button 
                   type="button"
                   onClick={() => removePhoto(i)}

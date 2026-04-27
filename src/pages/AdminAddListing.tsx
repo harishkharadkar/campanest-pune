@@ -187,7 +187,7 @@ const ImageUrlInput = ({ label, value, status, required, isMain, onChange, onLoa
           alt={`${label} preview`}
           onLoad={onLoad}
           onError={onError}
-          className="w-[120px] h-[80px] object-cover rounded-lg border border-border"
+          className="w-full h-auto object-contain max-h-[300px] rounded-lg border border-border"
         />
       )}
 

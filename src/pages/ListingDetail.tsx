@@ -459,7 +459,7 @@ export default function ListingDetail() {
           <div className="space-y-5">
                         <div className="card p-0 overflow-hidden">
               <div
-                className="relative aspect-[16/9] bg-[#141422]"
+                className="relative bg-[#141422] flex items-center justify-center"
                 onTouchStart={(event) => setTouchStartX(event.touches[0]?.clientX ?? null)}
                 onTouchEnd={(event) => {
                   if (touchStartX === null) return;
@@ -842,7 +842,7 @@ export default function ListingDetail() {
                           <img
                             src={image}
                             alt={item.name}
-                            className="w-full h-28 rounded-lg object-cover mb-3"
+                            className="w-full h-auto object-contain max-h-[300px] rounded-lg mb-3"
                             loading="lazy"
                             onError={(event) => {
                               const target = event.currentTarget;

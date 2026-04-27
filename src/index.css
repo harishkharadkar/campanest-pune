@@ -102,7 +102,7 @@
 }
 
 .listing-image {
-  @apply w-full h-full object-cover;
+  @apply w-full h-auto object-contain max-h-[300px];
 }
 
 .warning-banner-enter {

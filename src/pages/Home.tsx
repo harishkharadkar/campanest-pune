@@ -270,7 +270,7 @@ export default function Home() {
 
     return (
       <Link key={listing.id} to={`/listing/${listing.id}`} className="block card card-hover p-0 overflow-hidden">
-        <div className="relative rounded-t-2xl overflow-hidden aspect-[16/9] bg-[#161624]">
+        <div className="relative rounded-t-2xl overflow-hidden bg-[#161624] flex items-center justify-center">
           {primaryImage ? (
             <img
               src={primaryImage}
